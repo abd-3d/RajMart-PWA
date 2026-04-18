@@ -85,8 +85,8 @@ function saveToLocalStorage() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DB));
     flashSaveIndicator();
+    scheduleDriveUpload(); // auto-sync to Drive if connected (debounced 8s)
   } catch(e) {
-    // Storage quota exceeded (very rare — ~5MB limit)
     toast('❌ Save failed: ' + e.message, 'error');
   }
 }
@@ -103,9 +103,269 @@ function flashSaveIndicator() {
 function saveToServer() { saveToLocalStorage(); }
 
 function updateServerIndicator() {
-  // No server in PWA mode – keep element hidden
   const el = document.getElementById('serverIndicator');
   if (el) el.style.display = 'none';
+}
+
+// ==========================================================
+//  GOOGLE DRIVE SYNC
+//  Folder: My Drive / RajMart / amul_daily.json
+// ==========================================================
+const DRIVE_FILE_NAME   = 'amul_daily.json';
+const DRIVE_FOLDER_NAME = 'RajMart';
+const DRIVE_SCOPE       = 'https://www.googleapis.com/auth/drive.file';
+
+// ── Fill in your Google Client ID below ──────────────────────
+// How to get it: Export page → ☁️ Google Drive section → instructions
+let DRIVE_CLIENT_ID = localStorage.getItem('rajmart_drive_client_id') || '';
+
+let _driveToken      = null;   // OAuth access token
+let _driveFolderId   = null;   // ID of RajMart folder in Drive
+let _driveFileId     = null;   // ID of amul_daily.json in Drive
+let _driveSaveTimer  = null;   // debounce timer for auto-upload
+let _gapiReady       = false;  // gapi client loaded?
+
+// Called by gapi script onload callback
+function onGapiLoad() {
+  gapi.load('client', async () => {
+    try {
+      await gapi.client.init({});
+      await gapi.client.load(
+        'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
+      );
+      _gapiReady = true;
+      console.log('[Drive] gapi client ready.');
+    } catch(e) {
+      console.warn('[Drive] gapi init failed:', e);
+    }
+  });
+}
+
+// ── Sign In ───────────────────────────────────────────────────
+function driveSignIn() {
+  if (!DRIVE_CLIENT_ID) {
+    toast('⚠️ Paste your Google Client ID first — see Export page.', 'error');
+    showPage('export');
+    return;
+  }
+  if (!window.google || !window.google.accounts) {
+    toast('⚠️ Google script not loaded. Check internet connection.', 'error');
+    return;
+  }
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: DRIVE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: async (resp) => {
+      if (resp.error) {
+        toast('❌ Drive sign-in failed: ' + resp.error, 'error');
+        return;
+      }
+      _driveToken = resp.access_token;
+      gapi.client.setToken({ access_token: _driveToken });
+      updateDriveUI(true);
+      toast('✅ Connected to Google Drive!', 'success');
+      await driveFindOrCreateFolder();
+      await driveFindFile();
+      if (_driveFileId) {
+        updateDriveStatus('File found in Drive. Ready to sync.');
+      } else {
+        updateDriveStatus('No backup in Drive yet — will create on first save.');
+      }
+    }
+  });
+  client.requestAccessToken();
+}
+
+// ── Sign Out ──────────────────────────────────────────────────
+function driveSignOut() {
+  if (_driveToken && window.google) {
+    google.accounts.oauth2.revoke(_driveToken, () => {});
+  }
+  _driveToken    = null;
+  _driveFolderId = null;
+  _driveFileId   = null;
+  clearTimeout(_driveSaveTimer);
+  updateDriveUI(false);
+  toast('Disconnected from Google Drive.', 'info');
+}
+
+// ── Save Client ID entered by user ───────────────────────────
+function saveDriveClientId() {
+  const val = (document.getElementById('driveClientIdInput').value || '').trim();
+  if (!val) { toast('Paste a Client ID first.', 'error'); return; }
+  DRIVE_CLIENT_ID = val;
+  localStorage.setItem('rajmart_drive_client_id', val);
+  toast('✅ Client ID saved!', 'success');
+  updateDriveUI(false);
+}
+
+// ── UI helpers ────────────────────────────────────────────────
+function updateDriveUI(connected) {
+  // Topbar cloud button
+  const topBtn = document.getElementById('driveTopBtn');
+  if (topBtn) {
+    topBtn.textContent  = connected ? '☁️ Drive ✅' : '☁️ Drive';
+    topBtn.style.background   = connected ? 'rgba(30,132,73,0.3)' : 'rgba(255,255,255,0.15)';
+    topBtn.style.borderColor  = connected ? 'rgba(30,132,73,0.7)' : 'rgba(255,255,255,0.3)';
+  }
+  // Export page buttons
+  const ids = ['driveUploadBtn','driveDownloadBtn'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !connected;
+  });
+  const signInBtn  = document.getElementById('driveSignInBtn');
+  const signOutBtn = document.getElementById('driveSignOutBtn');
+  if (signInBtn)  signInBtn.style.display  = connected ? 'none'         : 'inline-flex';
+  if (signOutBtn) signOutBtn.style.display = connected ? 'inline-flex'  : 'none';
+
+  // Show saved client ID in input if present
+  const inp = document.getElementById('driveClientIdInput');
+  if (inp && DRIVE_CLIENT_ID && !inp.value) inp.value = DRIVE_CLIENT_ID;
+}
+
+function updateDriveStatus(msg) {
+  const el = document.getElementById('driveStatusText');
+  if (el) el.textContent = msg;
+}
+
+function updateDriveLastSync() {
+  const el = document.getElementById('driveLastSync');
+  if (el) el.textContent = 'Last synced: ' + new Date().toLocaleTimeString('en-IN');
+  updateDriveStatus('Synced ✅');
+}
+
+// ── Find or create "RajMart" folder ──────────────────────────
+async function driveFindOrCreateFolder() {
+  if (!_driveToken) return;
+  try {
+    const res = await gapi.client.drive.files.list({
+      q: `name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name)',
+      spaces: 'drive'
+    });
+    if (res.result.files.length > 0) {
+      _driveFolderId = res.result.files[0].id;
+    } else {
+      const folder = await gapi.client.drive.files.create({
+        resource: { name: DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' },
+        fields: 'id'
+      });
+      _driveFolderId = folder.result.id;
+      toast('📁 Created "RajMart" folder in Google Drive.', 'info');
+    }
+  } catch(e) {
+    console.error('[Drive] Folder error:', e);
+    updateDriveStatus('Folder error: ' + e.message);
+  }
+}
+
+// ── Find existing amul_daily.json ─────────────────────────────
+async function driveFindFile() {
+  if (!_driveToken || !_driveFolderId) return;
+  try {
+    const res = await gapi.client.drive.files.list({
+      q: `name='${DRIVE_FILE_NAME}' and '${_driveFolderId}' in parents and trashed=false`,
+      fields: 'files(id,name,modifiedTime)',
+      spaces: 'drive'
+    });
+    if (res.result.files.length > 0) {
+      _driveFileId = res.result.files[0].id;
+    }
+  } catch(e) {
+    console.error('[Drive] File search error:', e);
+  }
+}
+
+// ── Upload DB → Drive ─────────────────────────────────────────
+async function driveUpload(silent = false) {
+  if (!_driveToken) {
+    if (!silent) toast('⚠️ Connect to Google Drive first.', 'error');
+    return;
+  }
+  if (!_driveFolderId) await driveFindOrCreateFolder();
+
+  const content  = JSON.stringify(DB, null, 2);
+  const metadata = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
+  if (!_driveFileId) metadata.parents = [_driveFolderId];
+
+  const boundary = 'rajmart_multipart';
+  const body = [
+    `--${boundary}`,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify(metadata),
+    `--${boundary}`,
+    'Content-Type: application/json',
+    '',
+    content,
+    `--${boundary}--`
+  ].join('\r\n');
+
+  const method = _driveFileId ? 'PATCH' : 'POST';
+  const url    = _driveFileId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${_driveFileId}?uploadType=multipart`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+
+  try {
+    if (!silent) updateDriveStatus('Uploading…');
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': 'Bearer ' + _driveToken,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'Upload failed');
+    }
+    const data = await res.json();
+    _driveFileId = data.id;
+    if (!silent) toast('☁️ Saved to Google Drive → RajMart/amul_daily.json', 'success');
+    updateDriveLastSync();
+  } catch(e) {
+    if (!silent) toast('❌ Drive upload failed: ' + e.message, 'error');
+    console.error('[Drive] Upload error:', e);
+    updateDriveStatus('Upload failed: ' + e.message);
+  }
+}
+
+// ── Download Drive → DB ───────────────────────────────────────
+async function driveDownload() {
+  if (!_driveToken) { toast('⚠️ Connect to Google Drive first.', 'error'); return; }
+  if (!_driveFolderId) await driveFindOrCreateFolder();
+  if (!_driveFileId)   await driveFindFile();
+  if (!_driveFileId)   { toast('No backup found in Drive yet.', 'info'); return; }
+
+  try {
+    updateDriveStatus('Downloading…');
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`,
+      { headers: { 'Authorization': 'Bearer ' + _driveToken } }
+    );
+    if (!res.ok) throw new Error('Download request failed');
+    const loaded = await res.json();
+    if (!loaded.products) loaded.products = JSON.parse(JSON.stringify(DEFAULT_PRODUCTS));
+    if (!loaded.orders)   loaded.orders   = [];
+    if (!loaded.payments) loaded.payments = [];
+    DB = loaded;
+    persistDB();
+    showPage(activePage);
+    toast('✅ Data restored from Google Drive!', 'success');
+    updateDriveLastSync();
+  } catch(e) {
+    toast('❌ Drive download failed: ' + e.message, 'error');
+    updateDriveStatus('Download failed: ' + e.message);
+  }
+}
+
+// ── Auto-upload debounce (8 seconds after last save) ─────────
+function scheduleDriveUpload() {
+  if (!_driveToken) return;
+  clearTimeout(_driveSaveTimer);
+  _driveSaveTimer = setTimeout(() => driveUpload(true), 8000);
 }
 
 document.addEventListener('keydown', function(e) {
@@ -1543,8 +1803,8 @@ function renderAnalytics() {
 function initExportPage() {
   document.getElementById('exportDayDate').value = todayStr();
   document.getElementById('exportMonth').value = todayStr().substr(0, 7);
-  // Show storage info
   updateStorageInfo();
+  updateDriveUI(!!_driveToken); // reflect current Drive connection state
 }
 
 function updateStorageInfo() {

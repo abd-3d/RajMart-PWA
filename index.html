@@ -27,6 +27,23 @@
 </head>
 <body>
 
+<!-- ===== CAPTURE PWA INSTALL PROMPT AS EARLY AS POSSIBLE ===== -->
+<script>
+  window._deferredInstallPrompt = null;
+  window.addEventListener('beforeinstallprompt', function(e) {
+    e.preventDefault();
+    window._deferredInstallPrompt = e;
+    // Try to show button if DOM already has it
+    var btn = document.getElementById('pwaInstallBtn');
+    if (btn) btn.style.display = 'inline-flex';
+  });
+  window.addEventListener('appinstalled', function() {
+    window._deferredInstallPrompt = null;
+    var btn = document.getElementById('pwaInstallBtn');
+    if (btn) btn.style.display = 'none';
+  });
+</script>
+
 <div id="mainApp">
 
   <!-- ===== TOPBAR ===== -->
@@ -41,7 +58,7 @@
     <div class="topbar-right">
       <span id="saveIndicator" class="save-indicator"></span>
       <button id="driveTopBtn" onclick="driveSignIn()" title="Sync with Google Drive" class="topbar-icon-btn">☁️</button>
-      <button id="pwaInstallBtn" style="display:none;" class="topbar-icon-btn" onclick="pwaInstall()">📲</button>
+      <button id="pwaInstallBtn" style="display:none;" class="topbar-icon-btn" onclick="pwaInstall()">📲 Install</button>
     </div>
   </div>
 
@@ -618,29 +635,33 @@ function toggleMobileMenu() {
   btn.classList.toggle('open');
 }
 
-// ===== SYNC BOTTOM TABS WITH ACTIVE PAGE =====
-// Override showPage to also update bottom tabs
-const _origShowPage = showPage;
-// Patch the tab highlight via a MutationObserver watching .page.active changes
-const tabMap = { dashboard:'tab-dashboard', order:'tab-order', ledger:'tab-ledger', payments:'tab-payments', products:'tab-more', analytics:'tab-more', export:'tab-more' };
-const _origShowPageWrapper = window.showPage;
-// We monkey-patch after app.js loads by hooking into activePage changes
-// Simpler: re-highlight after each click via the tab buttons themselves
+// ===== TAB MAP =====
+const tabMap = {
+  dashboard: 'tab-dashboard',
+  order:     'tab-order',
+  ledger:    'tab-ledger',
+  payments:  'tab-payments',
+  products:  'tab-more',
+  analytics: 'tab-more',
+  export:    'tab-more'
+};
+
 function highlightTab(page) {
+  // Bottom tabs
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   const tabId = tabMap[page];
   if (tabId) { const el = document.getElementById(tabId); if (el) el.classList.add('active'); }
-  // Also highlight desktop nav
+  // Desktop nav
   document.querySelectorAll('.desktop-nav button[id^="nav-"]').forEach(b => b.classList.remove('active'));
   const navBtn = document.getElementById('nav-' + page);
   if (navBtn) navBtn.classList.add('active');
-  // And mobile menu buttons
+  // Mobile menu buttons
   document.querySelectorAll('.mobile-nav-btn[id^="mnav-"]').forEach(b => b.classList.remove('active'));
   const mnavBtn = document.getElementById('mnav-' + page);
   if (mnavBtn) mnavBtn.classList.add('active');
 }
 
-// Wrap showPage to also call highlightTab
+// ===== WRAP showPage TO ALSO HIGHLIGHT TABS =====
 const _baseShowPage = showPage;
 window.showPage = function(page) {
   _baseShowPage(page);
@@ -650,45 +671,46 @@ window.showPage = function(page) {
 // Initial highlight
 highlightTab('dashboard');
 
+// ===== SHOW INSTALL BUTTON IF PROMPT ALREADY CAPTURED =====
+// (handles the race condition where beforeinstallprompt fired before DOM)
+if (window._deferredInstallPrompt) {
+  const btn = document.getElementById('pwaInstallBtn');
+  if (btn) btn.style.display = 'inline-flex';
+}
+
+// ===== PWA INSTALL =====
+function pwaInstall() {
+  const prompt = window._deferredInstallPrompt;
+  if (!prompt) return;
+  prompt.prompt();
+  prompt.userChoice.then(function(choice) {
+    if (choice.outcome === 'accepted') {
+      const btn = document.getElementById('pwaInstallBtn');
+      if (btn) btn.style.display = 'none';
+    }
+    window._deferredInstallPrompt = null;
+  });
+}
+
 // ===== SERVICE WORKER =====
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
+  window.addEventListener('load', function() {
     navigator.serviceWorker.register('./sw.js')
-      .then(reg => {
-        reg.addEventListener('updatefound', () => {
+      .then(function(reg) {
+        reg.addEventListener('updatefound', function() {
           const newSW = reg.installing;
-          newSW.addEventListener('statechange', () => {
+          newSW.addEventListener('statechange', function() {
             if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-              setTimeout(() => { if (typeof toast === 'function') toast('🔄 App updated! Reload for latest.', 'info'); }, 1000);
+              setTimeout(function() {
+                if (typeof toast === 'function') toast('🔄 App updated! Reload for latest.', 'info');
+              }, 1000);
             }
           });
         });
       })
-      .catch(err => console.warn('[PWA] SW failed:', err));
+      .catch(function(err) { console.warn('[PWA] SW failed:', err); });
   });
 }
-
-// ===== PWA INSTALL =====
-let _deferredInstallPrompt = null;
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  _deferredInstallPrompt = e;
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.style.display = 'inline-flex';
-});
-function pwaInstall() {
-  if (!_deferredInstallPrompt) return;
-  _deferredInstallPrompt.prompt();
-  _deferredInstallPrompt.userChoice.then(choice => {
-    if (choice.outcome === 'accepted') { const btn = document.getElementById('pwaInstallBtn'); if (btn) btn.style.display = 'none'; }
-    _deferredInstallPrompt = null;
-  });
-}
-window.addEventListener('appinstalled', () => {
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.style.display = 'none';
-  _deferredInstallPrompt = null;
-});
 </script>
 </body>
 </html>

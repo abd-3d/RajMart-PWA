@@ -46,10 +46,10 @@ const INITIAL_DB = {
 let DB = JSON.parse(JSON.stringify(INITIAL_DB));
 let activePage = 'dashboard';
 let orderType = 'morning';
-let orderSupplier = 'ajay'; // default supplier for new order
+let orderSupplier = 'ajay';
 let pendingDelete = null;
 let currentLedgerFilter = 'all';
-let currentLedgerSupplier = 'all'; // 'all' | supplier id
+let currentLedgerSupplier = 'all';
 let orderItems = {};
 let editingOrderId = null;
 let editOrderItems = {};
@@ -58,17 +58,14 @@ let editOrderSupplier = 'ajay';
 let editingPaymentId = null;
 
 // ==========================================================
-//  LOCAL STORAGE  (key: "amul_daily")
+//  LOCAL STORAGE
 // ==========================================================
 const STORAGE_KEY = 'amul_daily';
 
 function loadFromLocalStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      // First ever launch — nothing saved yet, start fresh silently
-      return;
-    }
+    if (!raw) { return; }
     const loaded = JSON.parse(raw);
     if (!loaded.products) loaded.products = JSON.parse(JSON.stringify(DEFAULT_PRODUCTS));
     if (!loaded.orders)   loaded.orders   = [];
@@ -85,7 +82,7 @@ function saveToLocalStorage() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DB));
     flashSaveIndicator();
-    scheduleDriveUpload(); // auto-sync to Drive if connected (debounced 8s)
+    scheduleDriveUpload();
   } catch(e) {
     toast('❌ Save failed: ' + e.message, 'error');
   }
@@ -99,7 +96,6 @@ function flashSaveIndicator() {
   setTimeout(() => { el.style.opacity = '0'; }, 2000);
 }
 
-// Alias kept for backward compatibility (called after every data mutation)
 function saveToServer() { saveToLocalStorage(); }
 
 function updateServerIndicator() {
@@ -109,39 +105,30 @@ function updateServerIndicator() {
 
 // ==========================================================
 //  GOOGLE DRIVE SYNC
-//  Folder: My Drive / RajMart / amul_daily.json
 // ==========================================================
 const DRIVE_FILE_NAME   = 'amul_daily.json';
 const DRIVE_FOLDER_NAME = 'RajMart';
 const DRIVE_SCOPE       = 'https://www.googleapis.com/auth/drive.file';
 
-// ── Fill in your Google Client ID below ──────────────────────
-// How to get it: Export page → ☁️ Google Drive section → instructions
 let DRIVE_CLIENT_ID = localStorage.getItem('rajmart_drive_client_id') || '';
+let _driveToken      = null;
+let _driveFolderId   = null;
+let _driveFileId     = null;
+let _driveSaveTimer  = null;
+let _gapiReady       = false;
 
-let _driveToken      = null;   // OAuth access token
-let _driveFolderId   = null;   // ID of RajMart folder in Drive
-let _driveFileId     = null;   // ID of amul_daily.json in Drive
-let _driveSaveTimer  = null;   // debounce timer for auto-upload
-let _gapiReady       = false;  // gapi client loaded?
-
-// Called by gapi script onload callback
 function onGapiLoad() {
   gapi.load('client', async () => {
     try {
       await gapi.client.init({});
-      await gapi.client.load(
-        'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
-      );
+      await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/drive/v3/rest');
       _gapiReady = true;
-      console.log('[Drive] gapi client ready.');
     } catch(e) {
       console.warn('[Drive] gapi init failed:', e);
     }
   });
 }
 
-// ── Sign In ───────────────────────────────────────────────────
 function driveSignIn() {
   if (!DRIVE_CLIENT_ID) {
     toast('⚠️ Paste your Google Client ID first — see Export page.', 'error');
@@ -156,10 +143,7 @@ function driveSignIn() {
     client_id: DRIVE_CLIENT_ID,
     scope: DRIVE_SCOPE,
     callback: async (resp) => {
-      if (resp.error) {
-        toast('❌ Drive sign-in failed: ' + resp.error, 'error');
-        return;
-      }
+      if (resp.error) { toast('❌ Drive sign-in failed: ' + resp.error, 'error'); return; }
       _driveToken = resp.access_token;
       gapi.client.setToken({ access_token: _driveToken });
       updateDriveUI(true);
@@ -176,20 +160,14 @@ function driveSignIn() {
   client.requestAccessToken();
 }
 
-// ── Sign Out ──────────────────────────────────────────────────
 function driveSignOut() {
-  if (_driveToken && window.google) {
-    google.accounts.oauth2.revoke(_driveToken, () => {});
-  }
-  _driveToken    = null;
-  _driveFolderId = null;
-  _driveFileId   = null;
+  if (_driveToken && window.google) { google.accounts.oauth2.revoke(_driveToken, () => {}); }
+  _driveToken = null; _driveFolderId = null; _driveFileId = null;
   clearTimeout(_driveSaveTimer);
   updateDriveUI(false);
   toast('Disconnected from Google Drive.', 'info');
 }
 
-// ── Save Client ID entered by user ───────────────────────────
 function saveDriveClientId() {
   const val = (document.getElementById('driveClientIdInput').value || '').trim();
   if (!val) { toast('Paste a Client ID first.', 'error'); return; }
@@ -199,27 +177,19 @@ function saveDriveClientId() {
   updateDriveUI(false);
 }
 
-// ── UI helpers ────────────────────────────────────────────────
 function updateDriveUI(connected) {
-  // Topbar cloud button
   const topBtn = document.getElementById('driveTopBtn');
   if (topBtn) {
-    topBtn.textContent  = connected ? '☁️ Drive ✅' : '☁️ Drive';
+    topBtn.textContent  = connected ? '☁️✅' : '☁️';
     topBtn.style.background   = connected ? 'rgba(30,132,73,0.3)' : 'rgba(255,255,255,0.15)';
     topBtn.style.borderColor  = connected ? 'rgba(30,132,73,0.7)' : 'rgba(255,255,255,0.3)';
   }
-  // Export page buttons
   const ids = ['driveUploadBtn','driveDownloadBtn'];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = !connected;
-  });
+  ids.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = !connected; });
   const signInBtn  = document.getElementById('driveSignInBtn');
   const signOutBtn = document.getElementById('driveSignOutBtn');
-  if (signInBtn)  signInBtn.style.display  = connected ? 'none'         : 'inline-flex';
-  if (signOutBtn) signOutBtn.style.display = connected ? 'inline-flex'  : 'none';
-
-  // Show saved client ID in input if present
+  if (signInBtn)  signInBtn.style.display  = connected ? 'none'        : 'inline-flex';
+  if (signOutBtn) signOutBtn.style.display = connected ? 'inline-flex' : 'none';
   const inp = document.getElementById('driveClientIdInput');
   if (inp && DRIVE_CLIENT_ID && !inp.value) inp.value = DRIVE_CLIENT_ID;
 }
@@ -235,14 +205,12 @@ function updateDriveLastSync() {
   updateDriveStatus('Synced ✅');
 }
 
-// ── Find or create "RajMart" folder ──────────────────────────
 async function driveFindOrCreateFolder() {
   if (!_driveToken) return;
   try {
     const res = await gapi.client.drive.files.list({
       q: `name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      fields: 'files(id,name)',
-      spaces: 'drive'
+      fields: 'files(id,name)', spaces: 'drive'
     });
     if (res.result.files.length > 0) {
       _driveFolderId = res.result.files[0].id;
@@ -254,97 +222,56 @@ async function driveFindOrCreateFolder() {
       _driveFolderId = folder.result.id;
       toast('📁 Created "RajMart" folder in Google Drive.', 'info');
     }
-  } catch(e) {
-    console.error('[Drive] Folder error:', e);
-    updateDriveStatus('Folder error: ' + e.message);
-  }
+  } catch(e) { console.error('[Drive] Folder error:', e); updateDriveStatus('Folder error: ' + e.message); }
 }
 
-// ── Find existing amul_daily.json ─────────────────────────────
 async function driveFindFile() {
   if (!_driveToken || !_driveFolderId) return;
   try {
     const res = await gapi.client.drive.files.list({
       q: `name='${DRIVE_FILE_NAME}' and '${_driveFolderId}' in parents and trashed=false`,
-      fields: 'files(id,name,modifiedTime)',
-      spaces: 'drive'
+      fields: 'files(id,name,modifiedTime)', spaces: 'drive'
     });
-    if (res.result.files.length > 0) {
-      _driveFileId = res.result.files[0].id;
-    }
-  } catch(e) {
-    console.error('[Drive] File search error:', e);
-  }
+    if (res.result.files.length > 0) { _driveFileId = res.result.files[0].id; }
+  } catch(e) { console.error('[Drive] File search error:', e); }
 }
 
-// ── Upload DB → Drive ─────────────────────────────────────────
 async function driveUpload(silent = false) {
-  if (!_driveToken) {
-    if (!silent) toast('⚠️ Connect to Google Drive first.', 'error');
-    return;
-  }
+  if (!_driveToken) { if (!silent) toast('⚠️ Connect to Google Drive first.', 'error'); return; }
   if (!_driveFolderId) await driveFindOrCreateFolder();
-
   const content  = JSON.stringify(DB, null, 2);
   const metadata = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
   if (!_driveFileId) metadata.parents = [_driveFolderId];
-
   const boundary = 'rajmart_multipart';
-  const body = [
-    `--${boundary}`,
-    'Content-Type: application/json; charset=UTF-8',
-    '',
-    JSON.stringify(metadata),
-    `--${boundary}`,
-    'Content-Type: application/json',
-    '',
-    content,
-    `--${boundary}--`
-  ].join('\r\n');
-
+  const body = [`--${boundary}`, 'Content-Type: application/json; charset=UTF-8', '', JSON.stringify(metadata),
+    `--${boundary}`, 'Content-Type: application/json', '', content, `--${boundary}--`].join('\r\n');
   const method = _driveFileId ? 'PATCH' : 'POST';
-  const url    = _driveFileId
+  const url = _driveFileId
     ? `https://www.googleapis.com/upload/drive/v3/files/${_driveFileId}?uploadType=multipart`
     : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-
   try {
     if (!silent) updateDriveStatus('Uploading…');
-    const res = await fetch(url, {
-      method,
-      headers: {
-        'Authorization': 'Bearer ' + _driveToken,
-        'Content-Type': `multipart/related; boundary=${boundary}`
-      },
-      body
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error?.message || 'Upload failed');
-    }
+    const res = await fetch(url, { method, headers: { 'Authorization': 'Bearer ' + _driveToken, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Upload failed'); }
     const data = await res.json();
     _driveFileId = data.id;
-    if (!silent) toast('☁️ Saved to Google Drive → RajMart/amul_daily.json', 'success');
+    if (!silent) toast('☁️ Saved to Google Drive!', 'success');
     updateDriveLastSync();
   } catch(e) {
     if (!silent) toast('❌ Drive upload failed: ' + e.message, 'error');
-    console.error('[Drive] Upload error:', e);
     updateDriveStatus('Upload failed: ' + e.message);
   }
 }
 
-// ── Download Drive → DB ───────────────────────────────────────
 async function driveDownload() {
   if (!_driveToken) { toast('⚠️ Connect to Google Drive first.', 'error'); return; }
   if (!_driveFolderId) await driveFindOrCreateFolder();
   if (!_driveFileId)   await driveFindFile();
   if (!_driveFileId)   { toast('No backup found in Drive yet.', 'info'); return; }
-
   try {
     updateDriveStatus('Downloading…');
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`,
-      { headers: { 'Authorization': 'Bearer ' + _driveToken } }
-    );
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`,
+      { headers: { 'Authorization': 'Bearer ' + _driveToken } });
     if (!res.ok) throw new Error('Download request failed');
     const loaded = await res.json();
     if (!loaded.products) loaded.products = JSON.parse(JSON.stringify(DEFAULT_PRODUCTS));
@@ -361,7 +288,6 @@ async function driveDownload() {
   }
 }
 
-// ── Auto-upload debounce (8 seconds after last save) ─────────
 function scheduleDriveUpload() {
   if (!_driveToken) return;
   clearTimeout(_driveSaveTimer);
@@ -369,18 +295,13 @@ function scheduleDriveUpload() {
 }
 
 document.addEventListener('keydown', function(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-    e.preventDefault();
-    saveToServer();
-  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveToServer(); }
 });
 
 // ==========================================================
-//  FILE OPERATIONS (fallback for non-server mode)
+//  FILE OPERATIONS
 // ==========================================================
-function triggerLoadFile() {
-  document.getElementById('jsonFileInput').click();
-}
+function triggerLoadFile() { document.getElementById('jsonFileInput').click(); }
 
 function handleFileLoad(input) {
   const file = input.files[0];
@@ -393,12 +314,10 @@ function handleFileLoad(input) {
       if (!loaded.orders)   loaded.orders   = [];
       if (!loaded.payments) loaded.payments = [];
       DB = loaded;
-      persistDB(); // immediately save the imported data to localStorage
+      persistDB();
       toast('✅ Data imported from: ' + file.name, 'success');
       showPage(activePage);
-    } catch(err) {
-      toast('Error reading file: ' + err.message, 'error');
-    }
+    } catch(err) { toast('Error reading file: ' + err.message, 'error'); }
   };
   reader.readAsText(file);
   input.value = '';
@@ -425,6 +344,9 @@ function showPage(page) {
   const nb = document.getElementById('nav-' + page);
   if (nb) nb.classList.add('active');
   activePage = page;
+  // Close mobile menu if open
+  const mobileMenu = document.getElementById('mobileMenu');
+  if (mobileMenu) mobileMenu.classList.remove('open');
   if (page === 'dashboard') renderDashboard();
   else if (page === 'order') initOrderPage();
   else if (page === 'ledger') renderLedger();
@@ -452,14 +374,12 @@ function fmtDateLong(d) {
 }
 function getProduct(id) { return DB.products.find(p => p.id === id); }
 
-// Effective price for a product: suppliers Ajaybhai+Gaffarbhai use morning price; Mukeshbhai uses evening price
 function getEffectivePriceForSupplier(p, supplierId) {
   const sup = getSupplier(supplierId);
   if (sup && sup.priceType === 'evening' && p.eveningPrice != null) return p.eveningPrice;
   return p.price;
 }
 
-// Legacy compatibility (used for display/edit when supplier not yet known)
 function getEffectivePrice(p, type) {
   if (type === 'evening' && p.eveningPrice != null) return p.eveningPrice;
   return p.price;
@@ -468,15 +388,9 @@ function getEffectivePrice(p, type) {
 function calcOrderTotal(order) { return order.items.reduce((s, it) => s + it.amount, 0); }
 
 function calcBalance(supplierId) {
-  const orders = supplierId
-    ? DB.orders.filter(o => o.supplier === supplierId)
-    : DB.orders;
-  const payments = supplierId
-    ? DB.payments.filter(p => p.supplier === supplierId)
-    : DB.payments;
-  const totalOrders = orders.reduce((s, o) => s + calcOrderTotal(o), 0);
-  const totalPayments = payments.reduce((s, p) => s + p.amount, 0);
-  return totalOrders - totalPayments;
+  const orders = supplierId ? DB.orders.filter(o => o.supplier === supplierId) : DB.orders;
+  const payments = supplierId ? DB.payments.filter(p => p.supplier === supplierId) : DB.payments;
+  return orders.reduce((s, o) => s + calcOrderTotal(o), 0) - payments.reduce((s, p) => s + p.amount, 0);
 }
 
 function toast(msg, type = 'info') {
@@ -496,7 +410,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 function supplierBadge(supplierId) {
   const sup = getSupplier(supplierId);
   if (!sup) return '';
-  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${sup.bg};color:${sup.color};margin-left:5px;">👤 ${sup.name}</span>`;
+  return `<span class="sup-badge" style="background:${sup.bg};color:${sup.color};">👤 ${sup.name}</span>`;
 }
 
 // ==========================================================
@@ -531,56 +445,58 @@ function renderDashboard() {
     </div>
     <div class="stat-card">
       <div class="stat-icon orange">⚖️</div>
-      <div><div class="stat-label">Outstanding Balance</div><div class="stat-value orange">₹${fmt(balance)}</div><div class="stat-sub">All suppliers</div></div>
+      <div><div class="stat-label">Outstanding</div><div class="stat-value orange">₹${fmt(balance)}</div><div class="stat-sub">All suppliers</div></div>
     </div>`;
 
-  // Supplier balances
+  // Supplier balances — using CSS class, mobile-friendly
   let supBalHtml = SUPPLIERS.map(sup => {
     const bal = calcBalance(sup.id);
-    return `<div style="flex:1;min-width:120px;padding:10px 14px;border-radius:8px;background:${sup.bg};text-align:center;">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:${sup.color};">${sup.name}</div>
-      <div style="font-size:17px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:${sup.color};margin-top:3px;">₹${fmt(bal)}</div>
+    return `<div class="sup-bal-card" style="background:${sup.bg};">
+      <div class="sup-bal-name" style="color:${sup.color};">${sup.name}</div>
+      <div class="sup-bal-amount" style="color:${sup.color};">₹${fmt(bal)}</div>
     </div>`;
   }).join('');
-  document.getElementById('dashSupplierBalances').innerHTML = `<div style="display:flex;gap:10px;flex-wrap:wrap;">${supBalHtml}</div>`;
+  document.getElementById('dashSupplierBalances').innerHTML = `<div class="sup-bal-row">${supBalHtml}</div>`;
 
   const recent = [...DB.orders].sort((a,b) => b.date.localeCompare(a.date)).slice(0, 10);
   if (recent.length === 0) {
     document.getElementById('dashRecentOrders').innerHTML = '<div class="empty-state"><div class="icon">📋</div><div class="text">No orders yet. Click New Order to start.</div></div>';
   } else {
+    // Mobile-friendly recent orders — card style on mobile, table on desktop
     document.getElementById('dashRecentOrders').innerHTML = `
-      <table class="data-table">
-        <thead><tr><th>Date</th><th>Slot</th><th>Supplier</th><th>Items</th><th class="right">Total (₹)</th></tr></thead>
-        <tbody>${recent.map(o => {
-          const sup = getSupplier(o.supplier);
-          return `<tr style="cursor:pointer;" onclick="showOrderDetail('${o.id}')">
-            <td>${fmtDate(o.date)}</td>
-            <td><span class="type-badge badge-${o.type}">${o.type==='morning'?'🌅 Morning':o.type==='evening'?'🌆 Evening':'⭐ Special'}</span></td>
-            <td style="font-size:11px;font-weight:600;color:${sup?sup.color:'var(--text-muted)'};">${sup?sup.name:'—'}</td>
-            <td style="font-size:11px;color:var(--text-muted);">${o.items.length} item(s)</td>
-            <td class="right mono" style="font-weight:700;">₹${fmt(calcOrderTotal(o))}</td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>`;
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Slot</th><th>Supplier</th><th class="right">Total (₹)</th></tr></thead>
+          <tbody>${recent.map(o => {
+            const sup = getSupplier(o.supplier);
+            return `<tr style="cursor:pointer;" onclick="showOrderDetail('${o.id}')">
+              <td>${fmtDate(o.date)}</td>
+              <td><span class="type-badge badge-${o.type}">${o.type==='morning'?'🌅 Morn':o.type==='evening'?'🌆 Eve':'⭐ Spl'}</span></td>
+              <td style="font-size:11px;font-weight:600;color:${sup?sup.color:'var(--text-muted)'};">${sup?sup.name:'—'}</td>
+              <td class="right mono" style="font-weight:700;">₹${fmt(calcOrderTotal(o))}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>`;
   }
 
   const pct = totalOrders > 0 ? Math.round((totalPayments/totalOrders)*100) : 0;
   document.getElementById('dashBalance').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center;margin-bottom:14px;">
-      <div style="padding:12px;background:var(--red-bg);border-radius:8px;">
-        <div style="font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:0.7px;">Total Orders</div>
-        <div style="font-size:18px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:var(--red);margin-top:4px;">₹${fmt(totalOrders)}</div>
+    <div class="balance-grid">
+      <div class="balance-box red-box">
+        <div class="balance-label">Total Orders</div>
+        <div class="balance-amount" style="color:var(--red);">₹${fmt(totalOrders)}</div>
       </div>
-      <div style="padding:12px;background:var(--green-bg);border-radius:8px;">
-        <div style="font-size:10px;color:var(--green);font-weight:700;text-transform:uppercase;letter-spacing:0.7px;">Total Paid</div>
-        <div style="font-size:18px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:var(--green);margin-top:4px;">₹${fmt(totalPayments)}</div>
+      <div class="balance-box green-box">
+        <div class="balance-label">Total Paid</div>
+        <div class="balance-amount" style="color:var(--green);">₹${fmt(totalPayments)}</div>
       </div>
-      <div style="padding:12px;background:var(--orange-bg);border-radius:8px;">
-        <div style="font-size:10px;color:var(--orange);font-weight:700;text-transform:uppercase;letter-spacing:0.7px;">Remaining</div>
-        <div style="font-size:18px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:var(--orange);margin-top:4px;">₹${fmt(balance)}</div>
+      <div class="balance-box orange-box">
+        <div class="balance-label">Remaining</div>
+        <div class="balance-amount" style="color:var(--orange);">₹${fmt(balance)}</div>
       </div>
     </div>
-    <div style="background:var(--light-gray);border-radius:6px;overflow:hidden;height:10px;margin-bottom:6px;">
+    <div style="background:var(--light-gray);border-radius:6px;overflow:hidden;height:10px;margin:12px 0 6px;">
       <div style="height:100%;background:var(--green);border-radius:6px;width:${pct}%;transition:width 0.5s;"></div>
     </div>
     <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);">
@@ -594,10 +510,10 @@ function renderDashboard() {
   monthOrders.forEach(o => { monthDays[o.date] = (monthDays[o.date] || 0) + calcOrderTotal(o); });
   const days = Object.keys(monthDays).sort();
   document.getElementById('dashMonthlySummary').innerHTML = `
-    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
-      <div><div style="font-size:11px;color:var(--text-muted);">Active days</div><div style="font-size:18px;font-weight:700;">${days.length}</div></div>
-      <div><div style="font-size:11px;color:var(--text-muted);">Daily avg</div><div style="font-size:18px;font-weight:700;color:var(--red);">₹${fmt(days.length ? monthTotal/days.length : 0)}</div></div>
-      <div><div style="font-size:11px;color:var(--text-muted);">Payments</div><div style="font-size:18px;font-weight:700;color:var(--green);">₹${fmt(monthPayTotal)}</div></div>
+    <div class="month-summary-row">
+      <div><div class="month-label">Active days</div><div class="month-val">${days.length}</div></div>
+      <div><div class="month-label">Daily avg</div><div class="month-val" style="color:var(--red);">₹${fmt(days.length ? monthTotal/days.length : 0)}</div></div>
+      <div><div class="month-label">Payments</div><div class="month-val" style="color:var(--green);">₹${fmt(monthPayTotal)}</div></div>
     </div>
     ${days.length===0?'<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:8px;">No orders this month.</div>':''}`;
 }
@@ -619,9 +535,8 @@ function setOrderType(type) {
     const btn = document.getElementById('btn-' + t);
     btn.className = t === type ? 'active ' + t : '';
   });
-  const titles = { morning:'Products – Morning Delivery', evening:'Products – Evening Delivery', special:'Products – Special Order' };
+  const titles = { morning:'Products – Morning', evening:'Products – Evening', special:'Products – Special' };
   document.getElementById('productSectionTitle').textContent = titles[type];
-  // Update supplier options based on type
   renderSupplierSelector();
   orderItems = {};
   renderProductList();
@@ -631,12 +546,10 @@ function setOrderType(type) {
 function renderSupplierSelector() {
   const el = document.getElementById('orderSupplierWrap');
   if (!el) return;
-  // All suppliers available for every order type (morning, evening, special)
-  const available = SUPPLIERS;
-  el.innerHTML = available.map(s => `
+  el.innerHTML = SUPPLIERS.map(s => `
     <button onclick="setOrderSupplier('${s.id}')" id="supbtn-${s.id}"
-      class="${orderSupplier === s.id ? 'active' : ''}"
-      style="flex:1;padding:8px 12px;border:1.5px solid ${s.color};border-radius:7px;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:13px;font-weight:700;background:${orderSupplier===s.id?s.color:'white'};color:${orderSupplier===s.id?'white':s.color};transition:all 0.15s;">
+      class="sup-btn ${orderSupplier === s.id ? 'active' : ''}"
+      style="border-color:${s.color};background:${orderSupplier===s.id?s.color:'white'};color:${orderSupplier===s.id?'white':s.color};">
       👤 ${s.name}
     </button>`).join('');
 }
@@ -653,9 +566,9 @@ function renderProductList() {
   const regulars = DB.products.filter(p => p.category === 'regular');
   let html = '';
   if (orderType === 'special') {
-    html += `<div class="prod-section-label">⭐ Special Products (Crate Only)</div>`;
+    html += `<div class="prod-section-label">⭐ Special Products</div>`;
     html += specials.map(p => productRowHTML(p, true)).join('');
-    html += `<div class="prod-section-label" style="margin-top:10px;">📦 Regular Products (Optional)</div>`;
+    html += `<div class="prod-section-label" style="margin-top:10px;">📦 Regular Products</div>`;
     html += regulars.map(p => productRowHTML(p, false)).join('');
   } else {
     html += regulars.map(p => productRowHTML(p, false)).join('');
@@ -671,35 +584,30 @@ function productRowHTML(p, isSpecialCategory) {
   const effectivePrice = getEffectivePriceForSupplier(p, orderSupplier);
   const sup = getSupplier(orderSupplier);
   const isEveningDiff = sup && sup.priceType === 'evening' && p.eveningPrice != null;
-  let priceInfo = `₹${effectivePrice.toFixed(3).replace(/\.?0+$/, '')}/pc`;
-  if (p.crateQty && p.packType) priceInfo += ` · ${p.packType}:${p.crateQty}pcs`;
   const priceBadge = isEveningDiff
-    ? `<span style="font-size:9px;background:var(--green-bg);color:var(--green);padding:1px 5px;border-radius:8px;font-weight:700;margin-left:4px;">EVE RATE</span>`
+    ? `<span class="eve-badge">EVE</span>`
     : '';
   return `<div class="product-row ${hasVal ? 'has-value' : ''}" id="prodrow-${p.id}">
-    <div>
+    <div class="prod-info">
       <div class="prod-name">${p.name}${priceBadge}</div>
-      <div class="prod-price">${priceInfo}</div>
+      <div class="prod-price">₹${effectivePrice.toFixed(3).replace(/\.?0+$/, '')}/pc${p.crateQty ? ` · ${p.crateQty}pc/${packName}` : ''}</div>
     </div>
-    <div class="prod-price" style="text-align:right;">
-      ₹${effectivePrice.toFixed(3).replace(/\.?0+$/, '')}/pc
-      ${p.crateQty ? `<br>₹${fmt(effectivePrice * p.crateQty)}/${packName.toLowerCase()}` : ''}
-      ${isEveningDiff ? `<br><span style="font-size:9px;color:var(--text-muted);text-decoration:line-through;">₹${p.price.toFixed(3).replace(/\.?0+$/,'')}</span>` : ''}
-    </div>
-    <div class="unit-toggle">
-      ${isSpecialCategory
-        ? `<button class="active" style="background:var(--red);color:white;" disabled>${packName}</button>`
-        : `<button class="${item.unit==='pc'?'active':''}" onclick="setUnit('${p.id}','pc')">PCs</button>
-           <button class="${item.unit==='pack'?'active':''}" onclick="setUnit('${p.id}','pack')" ${!p.crateQty?'disabled title="No bulk qty"':''}>${packName}</button>`
-      }
-    </div>
-    <input class="qty-input" type="number" min="0" step="1"
-      placeholder="${isSpecialCategory||(item.unit==='pack')?packName+'s':'Pcs'}"
-      value="${item.qty}"
-      oninput="updateQty('${p.id}', this.value)"
-      id="qty-${p.id}">
-    <div class="row-total ${rowTotal>0?'active':''}" id="rowtotal-${p.id}">
-      ${rowTotal>0 ? '₹'+fmt(rowTotal) : '—'}
+    <div class="prod-controls">
+      <div class="unit-toggle">
+        ${isSpecialCategory
+          ? `<button class="active" style="background:var(--red);color:white;" disabled>${packName}</button>`
+          : `<button class="${item.unit==='pc'?'active':''}" onclick="setUnit('${p.id}','pc')">PC</button>
+             <button class="${item.unit==='pack'?'active':''}" onclick="setUnit('${p.id}','pack')" ${!p.crateQty?'disabled':''}>${packName}</button>`
+        }
+      </div>
+      <input class="qty-input" type="number" min="0" step="1"
+        placeholder="Qty"
+        value="${item.qty}"
+        oninput="updateQty('${p.id}', this.value)"
+        id="qty-${p.id}">
+      <div class="row-total ${rowTotal>0?'active':''}" id="rowtotal-${p.id}">
+        ${rowTotal>0 ? '₹'+fmt(rowTotal) : '—'}
+      </div>
     </div>
   </div>`;
 }
@@ -759,25 +667,27 @@ function renderOrderPreview() {
   const summaryEl = document.getElementById('orderSummary');
   const sup = getSupplier(orderSupplier);
   if (items.length === 0) {
-    previewEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:16px;font-size:12px;">Enter quantities above to see order preview</div>';
+    previewEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:16px;font-size:12px;">Enter quantities above to see preview</div>';
     summaryEl.style.display = 'none'; return;
   }
   previewEl.innerHTML = `
-    <table class="data-table" style="margin-bottom:0;">
-      <thead><tr><th>Product</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
-      <tbody>${items.map(it => {
-        const p = getProduct(it.productId);
-        const qtyDisplay = it.inputUnit === 'crate'
-          ? `${it.inputQty} crate${it.inputQty>1?'s':''} (${it.piecesQty}pc)`
-          : `${it.piecesQty}pc`;
-        return `<tr>
-          <td>${p ? p.name : it.productId}</td>
-          <td class="right mono" style="font-size:11px;">${qtyDisplay}</td>
-          <td class="right mono" style="font-size:11px;">₹${it.priceAtTime.toFixed(3).replace(/\.?0+$/,'')}</td>
-          <td class="right mono" style="font-weight:700;">₹${fmt(it.amount)}</td>
-        </tr>`;
-      }).join('')}</tbody>
-    </table>`;
+    <div class="table-scroll">
+      <table class="data-table" style="margin-bottom:0;">
+        <thead><tr><th>Product</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Amt</th></tr></thead>
+        <tbody>${items.map(it => {
+          const p = getProduct(it.productId);
+          const qtyDisplay = it.inputUnit === 'pack'
+            ? `${it.inputQty}×${it.crateQtyAtTime||1}`
+            : `${it.piecesQty}pc`;
+          return `<tr>
+            <td style="font-size:12px;">${p ? p.name : it.productId}</td>
+            <td class="right mono" style="font-size:11px;">${qtyDisplay}</td>
+            <td class="right mono" style="font-size:11px;">₹${it.priceAtTime.toFixed(2)}</td>
+            <td class="right mono" style="font-weight:700;font-size:12px;">₹${fmt(it.amount)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
   summaryEl.style.display = 'block';
   summaryEl.innerHTML = `
     <div class="summary-row"><span>Items</span><span>${items.length}</span></div>
@@ -817,20 +727,23 @@ function renderTodaysOrders() {
   if (orders.length === 0) {
     el.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:14px;">No orders for this date.</div>'; return;
   }
+  // Mobile-friendly order cards
   el.innerHTML = orders.map(o => {
     const total = calcOrderTotal(o);
     const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':'⭐';
     const sup = getSupplier(o.supplier);
-    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);">
-      <div>
-        <div style="font-size:13px;font-weight:700;">${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} ${o.type!=='special'?'Bill':'Order'} ${sup?supplierBadge(o.supplier):''}</div>
-        <div style="font-size:11px;color:var(--text-muted);">${o.items.length} item(s)${o.note?' · '+o.note:''}</div>
+    return `<div class="order-card">
+      <div class="order-card-header">
+        <div>
+          <div class="order-card-title">${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)}${sup?' – '+sup.name:''}</div>
+          <div class="order-card-sub">${o.items.length} item(s)${o.note?' · '+o.note:''}</div>
+        </div>
+        <div class="order-card-total">₹${fmt(total)}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:7px;">
-        <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--red);">₹${fmt(total)}</span>
-        <button class="btn btn-secondary btn-sm" onclick="showOrderDetail('${o.id}')">View</button>
+      <div class="order-card-actions">
+        <button class="btn btn-secondary btn-sm" onclick="showOrderDetail('${o.id}')">👁️ View</button>
         <button class="btn btn-info btn-sm" onclick="openEditOrder('${o.id}')">✏️ Edit</button>
-        <button class="btn btn-danger btn-sm" onclick="confirmDeleteOrder('${o.id}')">Del</button>
+        <button class="btn btn-danger btn-sm" onclick="confirmDeleteOrder('${o.id}')">🗑️ Del</button>
       </div>
     </div>`;
   }).join('');
@@ -842,28 +755,30 @@ function showOrderDetail(orderId) {
   const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':'⭐';
   const total = calcOrderTotal(o);
   const sup = getSupplier(o.supplier);
-  document.getElementById('orderDetailTitle').textContent = `${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} Order – ${fmtDateLong(o.date)}`;
+  document.getElementById('orderDetailTitle').textContent = `${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} – ${fmtDate(o.date)}`;
   document.getElementById('orderDetailContent').innerHTML = `
     ${sup?`<div style="margin-bottom:10px;font-size:12px;">Supplier: ${supplierBadge(o.supplier)}</div>`:''}
     ${o.note?`<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Note: ${o.note}</div>`:''}
-    <table class="data-table">
-      <thead><tr><th>Product</th><th class="right">Qty (pcs)</th><th class="right">Crates</th><th class="right">Rate (₹)</th><th class="right">Amount (₹)</th></tr></thead>
-      <tbody>${o.items.map(it => {
-        const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
-        const crates = it.crateQtyAtTime ? (it.piecesQty / it.crateQtyAtTime).toFixed(2).replace(/\.?0+$/,'') : '—';
-        return `<tr>
-          <td><strong>${p.name}</strong></td>
-          <td class="right mono">${it.piecesQty}</td>
-          <td class="right mono" style="color:var(--text-muted);">${crates}</td>
-          <td class="right mono">₹${it.priceAtTime.toFixed(3).replace(/\.?0+$/,'')}</td>
-          <td class="right mono" style="font-weight:700;">₹${fmt(it.amount)}</td>
-        </tr>`;
-      }).join('')}</tbody>
-      <tfoot>
-        <tr><td colspan="4" style="font-weight:700;text-align:right;padding:9px 11px;border-top:2px solid var(--border);">TOTAL</td>
-        <td class="right mono" style="font-weight:700;color:var(--red);font-size:14px;padding:9px 11px;border-top:2px solid var(--border);">₹${fmt(total)}</td></tr>
-      </tfoot>
-    </table>`;
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead><tr><th>Product</th><th class="right">Pcs</th><th class="right">Crates</th><th class="right">Rate</th><th class="right">Amt</th></tr></thead>
+        <tbody>${o.items.map(it => {
+          const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
+          const crates = it.crateQtyAtTime ? (it.piecesQty / it.crateQtyAtTime).toFixed(2).replace(/\.?0+$/,'') : '—';
+          return `<tr>
+            <td style="font-size:12px;"><strong>${p.name}</strong></td>
+            <td class="right mono">${it.piecesQty}</td>
+            <td class="right mono" style="color:var(--text-muted);">${crates}</td>
+            <td class="right mono" style="font-size:11px;">₹${it.priceAtTime.toFixed(2)}</td>
+            <td class="right mono" style="font-weight:700;">₹${fmt(it.amount)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+        <tfoot>
+          <tr><td colspan="4" style="font-weight:700;text-align:right;padding:9px 11px;border-top:2px solid var(--border);">TOTAL</td>
+          <td class="right mono" style="font-weight:700;color:var(--red);font-size:14px;padding:9px 11px;border-top:2px solid var(--border);">₹${fmt(total)}</td></tr>
+        </tfoot>
+      </table>
+    </div>`;
   document.getElementById('orderDetailPrintBtn').onclick = () => printSingleOrder(orderId);
   document.getElementById('orderDetailEditBtn').onclick = () => { closeModal('orderDetailModal'); openEditOrder(orderId); };
   document.getElementById('orderDetailWhatsappBtn').onclick = () => toggleWhatsappMsg(orderId);
@@ -884,56 +799,34 @@ function toggleWhatsappMsg(orderId) {
   const sup = getSupplier(o.supplier);
   const slotLabel = o.type === 'morning' ? 'Morning' : o.type === 'evening' ? 'Evening' : 'Special';
   const total = calcOrderTotal(o);
-
   const pad = (str, len) => String(str).padEnd(len, ' ');
   const rpad = (str, len) => String(str).padStart(len, ' ');
-
-  // Build item lines
   const itemLines = o.items.map(it => {
     const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
     const name = p.name.length > 20 ? p.name.substring(0, 19) + '.' : p.name;
     let qtyStr;
     if (it.inputUnit === 'pack' || it.inputUnit === 'crate') {
-      const packLabel = it.packTypeAtTime || 'Pack';
-      qtyStr = `${it.inputQty} ${packLabel} (${it.piecesQty} pcs)`;
+      qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`;
     } else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) {
       const packs = it.piecesQty / it.crateQtyAtTime;
-      const packsDisplay = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/, '');
-      const packLabel = it.packTypeAtTime || 'Crate';
-      qtyStr = `${it.piecesQty} pcs (${packsDisplay} ${packLabel})`;
-    } else {
-      qtyStr = `${it.piecesQty} pcs`;
-    }
+      const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,'');
+      qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`;
+    } else { qtyStr = `${it.piecesQty}pcs`; }
     const rate = `Rs.${it.priceAtTime.toFixed(2)}/pc`;
     const amt = `Rs.${fmt(it.amount)}`;
     return `  ${pad(name, 22)} ${pad(qtyStr, 20)} ${rpad(rate, 12)} ${rpad(amt, 10)}`;
   }).join('\n');
-
   const divider = '-'.repeat(68);
-
   const lines = [
-    `Raj Mart`,
-    `Order Details`,
-    divider,
-    `Date     : ${fmtDateLong(o.date)}`,
-    `Slot     : ${slotLabel}`,
-    sup ? `Supplier : ${sup.name}` : '',
-    o.note ? `Note     : ${o.note}` : '',
-    divider,
-    `  ${'Product'.padEnd(22)} ${'Quantity'.padEnd(20)} ${'Rate'.padStart(12)} ${'Amount'.padStart(10)}`,
-    divider,
-    itemLines,
-    divider,
-    `${'TOTAL'.padEnd(57)} ${rpad('Rs.' + fmt(total), 10)}`,
-    divider,
-    ``,
-    `Please confirm receipt of this order.`,
-    `Thank you.`
-  ].filter(l => l !== null && l !== undefined && !(l === '' && false));
-
-  // Remove blank lines that come from empty note/supplier
+    `Raj Mart`, `Order Details`, divider,
+    `Date     : ${fmtDateLong(o.date)}`, `Slot     : ${slotLabel}`,
+    sup ? `Supplier : ${sup.name}` : '', o.note ? `Note     : ${o.note}` : '',
+    divider, `  ${'Product'.padEnd(22)} ${'Quantity'.padEnd(20)} ${'Rate'.padStart(12)} ${'Amount'.padStart(10)}`,
+    divider, itemLines, divider,
+    `${'TOTAL'.padEnd(57)} ${rpad('Rs.'+fmt(total), 10)}`, divider, ``,
+    `Please confirm receipt of this order.`, `Thank you.`
+  ].filter(l => l !== null && l !== undefined);
   const msg = lines.filter((l, i) => l !== '' || i === lines.length - 3).join('\n');
-
   document.getElementById('whatsappMsgBox').value = msg;
   area.style.display = 'block';
   btn.textContent = 'Hide Message';
@@ -942,19 +835,12 @@ function toggleWhatsappMsg(orderId) {
 function copyWhatsappMsg() {
   const box = document.getElementById('whatsappMsgBox');
   if (!box) return;
-  box.select();
-  box.setSelectionRange(0, 99999);
+  box.select(); box.setSelectionRange(0, 99999);
   try {
     navigator.clipboard.writeText(box.value).then(() => {
       toast('Message copied! Paste it in WhatsApp.', 'success');
-    }).catch(() => {
-      document.execCommand('copy');
-      toast('Message copied! Paste it in WhatsApp.', 'success');
-    });
-  } catch(e) {
-    document.execCommand('copy');
-    toast('Message copied! Paste it in WhatsApp.', 'success');
-  }
+    }).catch(() => { document.execCommand('copy'); toast('Message copied!', 'success'); });
+  } catch(e) { document.execCommand('copy'); toast('Message copied!', 'success'); }
 }
 
 function sendLedgerWhatsapp(orderId) {
@@ -964,65 +850,38 @@ function sendLedgerWhatsapp(orderId) {
   const slotIcon = o.type === 'morning' ? '🌅' : o.type === 'evening' ? '🌆' : '⭐';
   const slotLabel = o.type === 'morning' ? 'Morning' : o.type === 'evening' ? 'Evening' : 'Special';
   const total = calcOrderTotal(o);
-
-  // Column widths for monospace table
   const C = { name: 18, qty: 18, rate: 13 };
   const pad  = (s, n) => String(s).padEnd(n, ' ');
   const rpad = (s, n) => String(s).padStart(n, ' ');
   const divider = '-'.repeat(C.name + C.qty + C.rate + 12);
-
   const itemLines = o.items.map(it => {
     const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
-    const name = p.name.length > C.name ? p.name.substring(0, C.name - 1) + '.' : p.name;
+    const name = p.name.length > C.name ? p.name.substring(0, C.name-1)+'.' : p.name;
     let qtyStr;
     if (it.inputUnit === 'pack' || it.inputUnit === 'crate') {
-      qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty} pcs)`;
+      qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`;
     } else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) {
       const packs = it.piecesQty / it.crateQtyAtTime;
       const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,'');
-      qtyStr = `${it.piecesQty} pcs (${pd} ${it.packTypeAtTime||'Crate'})`;
-    } else {
-      qtyStr = `${it.piecesQty} pcs`;
-    }
+      qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`;
+    } else { qtyStr = `${it.piecesQty}pcs`; }
     const rate = `Rs.${it.priceAtTime.toFixed(2)}/pc`;
     const amt  = `Rs.${fmt(it.amount)}`;
     return `${pad(name, C.name)} ${pad(qtyStr, C.qty)} ${pad(rate, C.rate)} ${amt}`;
   }).join('\n');
-
   const headerRow  = `${pad('Product', C.name)} ${pad('Qty', C.qty)} ${pad('Rate', C.rate)} Amount`;
-  const totalLabel = pad('TOTAL', C.name + 1 + C.qty + 1 + C.rate + 1);
-  const totalRow   = `${totalLabel}Rs.${fmt(total)}`;
-
-  // Triple backticks = monospace block in WhatsApp (columns align perfectly)
-  const table = '```\n' + [headerRow, divider, itemLines, divider, totalRow].join('\n') + '\n```';
-
-  const infoLine = [
-    `${fmtDateLong(o.date)}`,
-    `${slotIcon} ${slotLabel}`,
-    sup ? `${sup.name}` : ''
-  ].filter(Boolean).join('  |  ');
-
-  const msg = [
-    `*Raj Mart – Order Details*`,
-    ``,
-    infoLine,
-    o.note ? `📝 ${o.note}` : null,
-    ``,
-    table,
-    `*Total: Rs.${fmt(total)}*`,
-    ``
-  ].filter(l => l !== null).join('\n');
-
+  const totalLabel = pad('TOTAL', C.name+1+C.qty+1+C.rate+1);
+  const table = '```\n' + [headerRow, divider, itemLines, divider, `${totalLabel}Rs.${fmt(total)}`].join('\n') + '\n```';
+  const infoLine = [fmtDateLong(o.date), `${slotIcon} ${slotLabel}`, sup?sup.name:''].filter(Boolean).join('  |  ');
+  const msg = [`*Raj Mart – Order Details*`, ``, infoLine, o.note?`📝 ${o.note}`:null, ``, table, `*Total: Rs.${fmt(total)}*`, ``].filter(l=>l!==null).join('\n');
   navigator.clipboard.writeText(msg).then(() => {
-    toast('📋 Message copied! Paste it in WhatsApp.', 'success');
+    toast('📋 Copied! Paste in WhatsApp.', 'success');
   }).catch(() => {
     const ta = document.createElement('textarea');
     ta.value = msg; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select(); ta.setSelectionRange(0, 99999);
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    toast('📋 Message copied! Paste it in WhatsApp.', 'success');
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, 99999);
+    document.execCommand('copy'); document.body.removeChild(ta);
+    toast('📋 Copied! Paste in WhatsApp.', 'success');
   });
 }
 
@@ -1048,9 +907,7 @@ function openEditOrder(orderId) {
   editOrderType = o.type;
   editOrderSupplier = o.supplier || 'ajay';
   editOrderItems = {};
-  o.items.forEach(it => {
-    editOrderItems[it.productId] = { qty: String(it.inputQty), unit: it.inputUnit };
-  });
+  o.items.forEach(it => { editOrderItems[it.productId] = { qty: String(it.inputQty), unit: it.inputUnit }; });
   document.getElementById('editOrderDate').value = o.date;
   document.getElementById('editOrderNote').value = o.note || '';
   setEditOrderType(o.type);
@@ -1063,7 +920,7 @@ function setEditOrderType(type) {
     const btn = document.getElementById('editbtn-' + t);
     btn.className = t === type ? 'active ' + t : '';
   });
-  const titles = { morning:'Products – Morning Delivery', evening:'Products – Evening Delivery', special:'Products – Special Order' };
+  const titles = { morning:'Products – Morning', evening:'Products – Evening', special:'Products – Special' };
   document.getElementById('editProductSectionTitle').textContent = titles[type];
   renderEditSupplierSelector();
   renderEditProductList();
@@ -1073,14 +930,11 @@ function setEditOrderType(type) {
 function renderEditSupplierSelector() {
   const el = document.getElementById('editOrderSupplierWrap');
   if (!el) return;
-  // All suppliers available for every order type (morning, evening, special)
-  const available = SUPPLIERS;
-  if (!available.find(s => s.id === editOrderSupplier)) {
-    editOrderSupplier = available[0]?.id || 'ajay';
-  }
-  el.innerHTML = available.map(s => `
+  if (!SUPPLIERS.find(s => s.id === editOrderSupplier)) { editOrderSupplier = SUPPLIERS[0]?.id || 'ajay'; }
+  el.innerHTML = SUPPLIERS.map(s => `
     <button onclick="setEditOrderSupplier('${s.id}')"
-      style="flex:1;padding:7px 10px;border:1.5px solid ${s.color};border-radius:7px;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:700;background:${editOrderSupplier===s.id?s.color:'white'};color:${editOrderSupplier===s.id?'white':s.color};transition:all 0.15s;">
+      class="sup-btn ${editOrderSupplier===s.id?'active':''}"
+      style="border-color:${s.color};background:${editOrderSupplier===s.id?s.color:'white'};color:${editOrderSupplier===s.id?'white':s.color};">
       👤 ${s.name}
     </button>`).join('');
 }
@@ -1097,9 +951,9 @@ function renderEditProductList() {
   const regulars = DB.products.filter(p => p.category === 'regular');
   let html = '';
   if (editOrderType === 'special') {
-    html += `<div class="prod-section-label">⭐ Special Products (Crate Only)</div>`;
+    html += `<div class="prod-section-label">⭐ Special Products</div>`;
     html += specials.map(p => editProductRowHTML(p, true)).join('');
-    html += `<div class="prod-section-label" style="margin-top:10px;">📦 Regular Products (Optional)</div>`;
+    html += `<div class="prod-section-label" style="margin-top:10px;">📦 Regular Products</div>`;
     html += regulars.map(p => editProductRowHTML(p, false)).join('');
   } else {
     html += regulars.map(p => editProductRowHTML(p, false)).join('');
@@ -1115,35 +969,27 @@ function editProductRowHTML(p, isSpecialCategory) {
   const effectivePrice = getEffectivePriceForSupplier(p, editOrderSupplier);
   const sup = getSupplier(editOrderSupplier);
   const isEveningDiff = sup && sup.priceType === 'evening' && p.eveningPrice != null;
-  let priceInfo = `₹${effectivePrice.toFixed(3).replace(/\.?0+$/, '')}/pc`;
-  if (p.crateQty && p.packType) priceInfo += ` · ${p.packType}:${p.crateQty}pcs`;
-  const priceBadge = isEveningDiff
-    ? `<span style="font-size:9px;background:var(--green-bg);color:var(--green);padding:1px 5px;border-radius:8px;font-weight:700;margin-left:4px;">EVE RATE</span>`
-    : '';
+  const priceBadge = isEveningDiff ? `<span class="eve-badge">EVE</span>` : '';
   return `<div class="product-row ${hasVal ? 'has-value' : ''}" id="editprodrow-${p.id}">
-    <div>
+    <div class="prod-info">
       <div class="prod-name">${p.name}${priceBadge}</div>
-      <div class="prod-price">${priceInfo}</div>
+      <div class="prod-price">₹${effectivePrice.toFixed(3).replace(/\.?0+$/, '')}/pc${p.crateQty?` · ${p.crateQty}pc/${packName}`:''}</div>
     </div>
-    <div class="prod-price" style="text-align:right;">
-      ₹${effectivePrice.toFixed(3).replace(/\.?0+$/, '')}/pc
-      ${p.crateQty ? `<br>₹${fmt(effectivePrice * p.crateQty)}/${packName.toLowerCase()}` : ''}
-      ${isEveningDiff ? `<br><span style="font-size:9px;color:var(--text-muted);text-decoration:line-through;">₹${p.price.toFixed(3).replace(/\.?0+$/,'')}</span>` : ''}
-    </div>
-    <div class="unit-toggle">
-      ${isSpecialCategory
-        ? `<button class="active" style="background:var(--red);color:white;" disabled>${packName}</button>`
-        : `<button class="${item.unit==='pc'?'active':''}" onclick="setEditUnit('${p.id}','pc')">PCs</button>
-           <button class="${item.unit==='pack'?'active':''}" onclick="setEditUnit('${p.id}','pack')" ${!p.crateQty?'disabled title="No bulk qty"':''}>${packName}</button>`
-      }
-    </div>
-    <input class="qty-input" type="number" min="0" step="1"
-      placeholder="${isSpecialCategory||(item.unit==='pack')?packName+'s':'Pcs'}"
-      value="${item.qty}"
-      oninput="updateEditQty('${p.id}', this.value)"
-      id="editqty-${p.id}">
-    <div class="row-total ${rowTotal>0?'active':''}" id="editrowtotal-${p.id}">
-      ${rowTotal>0 ? '₹'+fmt(rowTotal) : '—'}
+    <div class="prod-controls">
+      <div class="unit-toggle">
+        ${isSpecialCategory
+          ? `<button class="active" style="background:var(--red);color:white;" disabled>${packName}</button>`
+          : `<button class="${item.unit==='pc'?'active':''}" onclick="setEditUnit('${p.id}','pc')">PC</button>
+             <button class="${item.unit==='pack'?'active':''}" onclick="setEditUnit('${p.id}','pack')" ${!p.crateQty?'disabled':''}>${packName}</button>`
+        }
+      </div>
+      <input class="qty-input" type="number" min="0" step="1"
+        placeholder="Qty" value="${item.qty}"
+        oninput="updateEditQty('${p.id}', this.value)"
+        id="editqty-${p.id}">
+      <div class="row-total ${rowTotal>0?'active':''}" id="editrowtotal-${p.id}">
+        ${rowTotal>0 ? '₹'+fmt(rowTotal) : '—'}
+      </div>
     </div>
   </div>`;
 }
@@ -1224,8 +1070,7 @@ function saveEditedOrder() {
   persistDB();
   toast('✅ Order updated!', 'success');
   closeModal('editOrderModal');
-  editingOrderId = null;
-  editOrderItems = {};
+  editingOrderId = null; editOrderItems = {};
   if (activePage === 'order') renderTodaysOrders();
   if (activePage === 'dashboard') renderDashboard();
   if (activePage === 'ledger') renderLedger();
@@ -1236,22 +1081,19 @@ function confirmDelete() {
   const { type, id } = pendingDelete;
   if (type === 'order') {
     DB.orders = DB.orders.filter(o => o.id !== id);
-    persistDB();
-    toast('Order deleted.', 'info');
+    persistDB(); toast('Order deleted.', 'info');
     if (activePage === 'order') renderTodaysOrders();
     if (activePage === 'dashboard') renderDashboard();
     if (activePage === 'ledger') renderLedger();
   } else if (type === 'payment') {
     DB.payments = DB.payments.filter(p => p.id !== id);
-    persistDB();
-    toast('Payment deleted.', 'info');
+    persistDB(); toast('Payment deleted.', 'info');
     renderPaymentsPage();
     if (activePage === 'dashboard') renderDashboard();
     if (activePage === 'ledger') renderLedger();
   } else if (type === 'product') {
     DB.products = DB.products.filter(p => p.id !== id);
-    persistDB();
-    toast('Product deleted.', 'info');
+    persistDB(); toast('Product deleted.', 'info');
     if (activePage === 'products') renderProductsPage();
   }
   pendingDelete = null;
@@ -1271,7 +1113,6 @@ function setLedgerFilter(filter, btn) {
 
 function setLedgerSupplier(supplierId) {
   currentLedgerSupplier = supplierId;
-  // update supplier tab UI
   document.querySelectorAll('.supplier-tab').forEach(b => b.classList.remove('active'));
   const activeTab = document.getElementById('supTab-' + supplierId);
   if (activeTab) activeTab.classList.add('active');
@@ -1286,7 +1127,7 @@ function getLedgerDateRange() {
   } else if (currentLedgerFilter === 'last-month') {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
     const m = d.toISOString().substr(0, 7);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+    const lastDay = new Date(d.getFullYear(), d.getMonth()+1, 0).toISOString().split('T')[0];
     return { from: m + '-01', to: lastDay };
   } else if (currentLedgerFilter === 'custom') {
     return { from: document.getElementById('ledgerFrom').value || '2000-01-01', to: document.getElementById('ledgerTo').value || today };
@@ -1296,30 +1137,18 @@ function getLedgerDateRange() {
 
 function buildAllLedgerRows(supplierId) {
   const rows = [];
-  const orders = supplierId && supplierId !== 'all'
-    ? DB.orders.filter(o => o.supplier === supplierId)
-    : DB.orders;
-  const payments = supplierId && supplierId !== 'all'
-    ? DB.payments.filter(p => p.supplier === supplierId)
-    : DB.payments;
-
+  const orders = supplierId && supplierId !== 'all' ? DB.orders.filter(o => o.supplier === supplierId) : DB.orders;
+  const payments = supplierId && supplierId !== 'all' ? DB.payments.filter(p => p.supplier === supplierId) : DB.payments;
   orders.forEach(o => {
     const total = calcOrderTotal(o);
     const sup = getSupplier(o.supplier);
-    rows.push({
-      id: o.id, date: o.date, type: o.type, debit: total, credit: 0,
-      amount: total, items: o.items, note: o.note,
-      supplier: o.supplier,
-      description: (sup ? sup.name + ' – ' : '') + (o.type === 'morning' ? 'Morning Bill' : o.type === 'evening' ? 'Evening Bill' : 'Special Order')
-    });
+    rows.push({ id: o.id, date: o.date, type: o.type, debit: total, credit: 0, amount: total, items: o.items, note: o.note, supplier: o.supplier,
+      description: (sup ? sup.name + ' – ' : '') + (o.type === 'morning' ? 'Morning Bill' : o.type === 'evening' ? 'Evening Bill' : 'Special Order') });
   });
   payments.forEach(p => {
     const sup = getSupplier(p.supplier);
-    rows.push({
-      id: p.id, date: p.date, type: 'payment', debit: 0, credit: p.amount, amount: p.amount,
-      supplier: p.supplier,
-      description: (sup ? sup.name + ' – ' : '') + (p.note || 'Payment Received')
-    });
+    rows.push({ id: p.id, date: p.date, type: 'payment', debit: 0, credit: p.amount, amount: p.amount, supplier: p.supplier,
+      description: (sup ? sup.name + ' – ' : '') + (p.note || 'Payment') });
   });
   const typeOrder = { morning:0, evening:1, special:2, payment:3 };
   rows.sort((a, b) => a.date.localeCompare(b.date) || (typeOrder[a.type]??2) - (typeOrder[b.type]??2));
@@ -1327,16 +1156,16 @@ function buildAllLedgerRows(supplierId) {
 }
 
 function renderLedger() {
-  // Render supplier tabs
+  // Supplier tabs
   const tabContainer = document.getElementById('ledgerSupplierTabs');
   if (tabContainer) {
     tabContainer.innerHTML = `
-      <button class="supplier-tab ${currentLedgerSupplier==='all'?'active':''}" id="supTab-all" onclick="setLedgerSupplier('all')">🌐 All Suppliers</button>
+      <button class="supplier-tab ${currentLedgerSupplier==='all'?'active':''}" id="supTab-all" onclick="setLedgerSupplier('all')">All</button>
       ${SUPPLIERS.map(s => `
         <button class="supplier-tab ${currentLedgerSupplier===s.id?'active':''}" id="supTab-${s.id}"
           onclick="setLedgerSupplier('${s.id}')"
           style="${currentLedgerSupplier===s.id?'background:'+s.color+';color:white;border-color:'+s.color+';':'color:'+s.color+';border-color:'+s.color+';'}">
-          👤 ${s.name}
+          ${s.name}
         </button>`).join('')}`;
   }
 
@@ -1350,7 +1179,7 @@ function renderLedger() {
   const tbody = document.getElementById('ledgerBody');
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><div class="icon">📒</div><div class="text">No transactions in this period.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="icon">📒</div><div class="text">No transactions in this period.</div></div></td></tr>`;
   } else {
     tbody.innerHTML = rows.map(r => {
       bal += r.debit - r.credit;
@@ -1359,43 +1188,45 @@ function renderLedger() {
       const isPay = r.type === 'payment';
       const detailId = 'det-' + r.id;
       const sup = getSupplier(r.supplier);
+      // Mobile-friendly ledger: collapsible detail rows
       let detailHTML = '';
       if (!isPay && r.items) {
-        detailHTML = `<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
-          <button class="ledger-expand-btn" title="View order details" onclick="toggleDetail('${detailId}')">👁️</button>
-          <button class="btn btn-info btn-sm" style="padding:2px 7px;font-size:10px;" onclick="openEditOrder('${r.id}')">✏️</button>
-          <button class="btn btn-secondary btn-sm" style="padding:2px 7px;font-size:10px;" onclick="printSingleOrder('${r.id}')" title="Print this order">🖨️</button>
-          <button class="btn btn-success btn-sm" style="padding:2px 7px;font-size:10px;" onclick="sendLedgerWhatsapp('${r.id}')" title="Share via WhatsApp">📲</button>
-          <button class="btn btn-danger btn-sm" style="padding:2px 7px;font-size:10px;" onclick="confirmDeleteOrder('${r.id}')">🗑️</button>
-        </div>
+        detailHTML = `
+          <div class="ledger-row-actions">
+            <button class="btn btn-secondary btn-sm" onclick="toggleDetail('${detailId}')">👁️</button>
+            <button class="btn btn-info btn-sm" onclick="openEditOrder('${r.id}')">✏️</button>
+            <button class="btn btn-success btn-sm" onclick="sendLedgerWhatsapp('${r.id}')">📲</button>
+            <button class="btn btn-danger btn-sm" onclick="confirmDeleteOrder('${r.id}')">🗑️</button>
+          </div>
           <div class="ledger-detail" id="${detailId}">
             ${r.items.map(it => {
               const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
               let qtyDisplay;
               if (it.inputUnit === 'pack' || it.inputUnit === 'crate') {
-                const packLabel = it.packTypeAtTime || 'Pack';
-                qtyDisplay = `${it.inputQty} ${packLabel.toLowerCase()}${it.inputQty>1?'s':''} (${it.piecesQty} pcs)`;
+                qtyDisplay = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`;
               } else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) {
                 const packs = (it.piecesQty / it.crateQtyAtTime);
-                const packsDisplay = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,'');
-                const packLabel = it.packTypeAtTime || 'crate';
-                qtyDisplay = `${it.piecesQty} pcs (${packsDisplay} ${packLabel.toLowerCase()}${packs!==1?'s':''})`;
-              } else {
-                qtyDisplay = `${it.piecesQty} pcs`;
-              }
+                const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,'');
+                qtyDisplay = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'crate'})`;
+              } else { qtyDisplay = `${it.piecesQty}pcs`; }
               return `<div class="detail-row"><span>${p.name} × ${qtyDisplay}</span><span>₹${fmt(it.amount)}</span></div>`;
             }).join('')}
           </div>`;
       }
+      // Mobile-friendly ledger row — show key info, hide less-important columns on mobile
       return `<tr class="${isPay?'payment-row':''}">
-        <td class="date-cell">${fmtDate(r.date)}</td>
-        <td><span class="type-badge badge-${r.type}">${r.type==='morning'?'🌅 Morning':r.type==='evening'?'🌆 Evening':r.type==='special'?'⭐ Special':'💳 Payment'}</span></td>
-        <td>${sup?`<span style="font-size:11px;font-weight:700;color:${sup.color};">👤 ${sup.name}</span>`:'<span style="color:var(--text-muted);font-size:11px;">—</span>'}</td>
-        <td style="font-size:12px;">${r.description}${r.note&&!isPay?'<br><span style="color:var(--text-muted);font-size:10px;">'+r.note+'</span>':''}</td>
-        <td class="right mono" style="color:var(--red);">${r.debit>0?'₹'+fmt(r.debit):'—'}</td>
+        <td class="date-cell">${fmtDate(r.date)}<br><span class="type-badge badge-${r.type}" style="margin-top:2px;display:inline-block;">${r.type==='morning'?'🌅':r.type==='evening'?'🌆':r.type==='special'?'⭐':'💳'}</span></td>
+        <td class="ledger-desc-cell">
+          <div style="font-size:12px;font-weight:600;">${sup?`<span style="color:${sup.color};">${sup.name}</span>`:'—'}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${r.note&&!isPay?r.note:''}</div>
+        </td>
+        <td class="right mono ledger-debit">${r.debit>0?'₹'+fmt(r.debit):'—'}</td>
         <td class="right mono credit-cell">${r.credit>0?'₹'+fmt(r.credit):'—'}</td>
         <td class="right balance-cell">₹${fmt(bal)}</td>
-        <td>${detailHTML}${isPay?`<div style="display:flex;gap:4px;align-items:center;"><button class="btn btn-info btn-sm" style="padding:2px 7px;font-size:10px;" onclick="openEditPayment('${r.id}')">✏️</button><button class="btn btn-danger btn-sm" style="padding:2px 7px;font-size:10px;" onclick="confirmDeletePayment('${r.id}')">🗑️</button></div>`:''}</td>
+        <td class="ledger-action-cell">
+          ${detailHTML}
+          ${isPay?`<div class="ledger-row-actions"><button class="btn btn-info btn-sm" onclick="openEditPayment('${r.id}')">✏️</button><button class="btn btn-danger btn-sm" onclick="confirmDeletePayment('${r.id}')">🗑️</button></div>`:''}
+        </td>
       </tr>`;
     }).join('');
   }
@@ -1403,17 +1234,11 @@ function renderLedger() {
   const outstanding = bal;
   const currentSup = currentLedgerSupplier !== 'all' ? getSupplier(currentLedgerSupplier) : null;
   document.getElementById('ledgerSummaryBar').innerHTML = `
-    <div style="padding:8px 14px;background:var(--red-bg);border-radius:7px;font-size:12px;">
-      <span style="font-weight:700;color:var(--red);">Total Orders: ₹${fmt(totalDebit)}</span>
-    </div>
-    <div style="padding:8px 14px;background:var(--green-bg);border-radius:7px;font-size:12px;">
-      <span style="font-weight:700;color:var(--green);">Total Paid: ₹${fmt(totalCredit)}</span>
-    </div>
-    <div style="padding:8px 14px;background:var(--orange-bg);border-radius:7px;font-size:12px;">
-      <span style="font-weight:700;color:var(--orange);">Balance: ₹${fmt(outstanding)}</span>
-    </div>
-    ${openingBal > 0 ? `<div style="padding:8px 14px;background:var(--light-gray);border-radius:7px;font-size:12px;color:var(--text-muted);">Opening: ₹${fmt(openingBal)}</div>` : ''}
-    ${currentSup ? `<div style="padding:8px 14px;border-radius:7px;font-size:12px;background:${currentSup.bg};"><span style="font-weight:700;color:${currentSup.color};">Viewing: ${currentSup.name}</span></div>` : ''}`;
+    <div class="ledger-summary-chip red-chip">Orders: ₹${fmt(totalDebit)}</div>
+    <div class="ledger-summary-chip green-chip">Paid: ₹${fmt(totalCredit)}</div>
+    <div class="ledger-summary-chip orange-chip">Balance: ₹${fmt(outstanding)}</div>
+    ${openingBal > 0 ? `<div class="ledger-summary-chip gray-chip">Opening: ₹${fmt(openingBal)}</div>` : ''}
+    ${currentSup ? `<div class="ledger-summary-chip" style="background:${currentSup.bg};color:${currentSup.color};">${currentSup.name}</div>` : ''}`;
 }
 
 function toggleDetail(id) {
@@ -1466,14 +1291,12 @@ function recordPaymentFromModal() {
     const idx = DB.payments.findIndex(p => p.id === editingPaymentId);
     if (idx === -1) { toast('Payment not found', 'error'); return; }
     DB.payments[idx] = { ...DB.payments[idx], date, amount, note, supplier };
-    persistDB();
-    toast('✅ Payment updated!', 'success');
-    editingPaymentId = null;
+    persistDB(); toast('✅ Payment updated!', 'success'); editingPaymentId = null;
   } else {
     DB.payments.push({ id: uid(), date, amount, note, supplier, createdAt: new Date().toISOString() });
     persistDB();
     const sup = getSupplier(supplier);
-    toast(`✅ Payment recorded for ${sup?sup.name:'supplier'}!`, 'success');
+    toast(`✅ Payment for ${sup?sup.name:'supplier'}!`, 'success');
   }
   closeModal('paymentModal');
   if (activePage === 'ledger') renderLedger();
@@ -1486,7 +1309,8 @@ function printCurrentLedger() {
   const supName = currentLedgerSupplier !== 'all' ? (getSupplier(currentLedgerSupplier)?.name || '') : 'All Suppliers';
   const title = (currentLedgerFilter === 'all' ? 'Full Ledger' :
     currentLedgerFilter === 'this-month' ? 'This Month Ledger' :
-    currentLedgerFilter === 'last-month' ? 'Last Month Ledger' : `Ledger ${fmtDate(from)} – ${fmtDate(to)}`) + ` – ${supName}`;
+    currentLedgerFilter === 'last-month' ? 'Last Month Ledger' :
+    `Ledger ${fmtDate(from)} – ${fmtDate(to)}`) + ` – ${supName}`;
   printLedgerPeriod(title, from, to, currentLedgerSupplier !== 'all' ? currentLedgerSupplier : null);
 }
 
@@ -1508,7 +1332,7 @@ function renderPaymentsPage() {
       <td class="right mono" style="font-weight:700;color:var(--green);">₹${fmt(p.amount)}</td>
       <td>
         <button class="btn btn-info btn-sm" onclick="openEditPayment('${p.id}')">✏️</button>
-        <button class="btn btn-danger btn-sm" onclick="confirmDeletePayment('${p.id}')">Del</button>
+        <button class="btn btn-danger btn-sm" onclick="confirmDeletePayment('${p.id}')">🗑️</button>
       </td>
     </tr>`;
   }).join('');
@@ -1543,8 +1367,8 @@ function renderProductsPage() {
       <td style="color:var(--text-muted);font-size:11px;">${i+1}</td>
       <td><strong>${p.name}</strong>${isCustom ? ' <span class="badge badge-blue" style="font-size:9px;padding:1px 5px;">Custom</span>' : ''}</td>
       <td><span class="badge ${p.category==='special'?'badge-red':'badge-gray'}">${p.category}</span></td>
-      <td class="right mono">₹${p.price.toFixed(3).replace(/\.?0+$/, '')}${p.eveningPrice != null ? '<br><span style="font-size:10px;color:var(--green);">₹' + p.eveningPrice.toFixed(3).replace(/\.?0+$/,'') + ' eve</span>' : ''}</td>
-      <td class="crate-info">${p.crateQty ? p.crateQty + ' pcs' + (p.packType ? ' / '+p.packType : '') : '—'}</td>
+      <td class="right mono">₹${p.price.toFixed(3).replace(/\.?0+$/, '')}${p.eveningPrice != null ? '<br><span style="font-size:10px;color:var(--green);">₹'+p.eveningPrice.toFixed(3).replace(/\.?0+$/,'')+'</span>' : ''}</td>
+      <td class="crate-info">${p.crateQty ? p.crateQty+'pcs'+(p.packType?'/'+p.packType:'') : '—'}</td>
       <td class="right mono">${cratePrice ? '₹'+fmt(cratePrice) : '—'}</td>
       <td><button class="btn btn-info btn-sm" onclick="openEditPrice('${p.id}')">✏️ Edit</button></td>
     </tr>`;
@@ -1558,19 +1382,11 @@ function updateEditPreview() {
   const el = document.getElementById('editPricePreview');
   if (!isNaN(price) && price > 0) {
     const eveningVal = parseFloat(document.getElementById('editEveningPriceVal').value);
-    let text = `₹${price.toFixed(3).replace(/\.?0+$/,'')} per piece (morning/Ajaybhai/Gaffarbhai)`;
-    if (!isNaN(eveningVal) && eveningVal > 0) {
-      text += ` · ₹${eveningVal.toFixed(3).replace(/\.?0+$/,'')} per piece (Mukeshbhai)`;
-    }
-    if (!isNaN(crateQty) && crateQty > 0 && packType) {
-      text += ` · ${packType} (${crateQty} pcs) = ₹${fmt(price * crateQty)}`;
-    } else if (!isNaN(crateQty) && crateQty > 0) {
-      text += ` · Pack (${crateQty} pcs) = ₹${fmt(price * crateQty)}`;
-    }
+    let text = `₹${price.toFixed(3).replace(/\.?0+$/,'')} per piece`;
+    if (!isNaN(eveningVal) && eveningVal > 0) { text += ` · Eve: ₹${eveningVal.toFixed(3).replace(/\.?0+$/,'')}`; }
+    if (!isNaN(crateQty) && crateQty > 0) { text += ` · ${packType||'Pack'} (${crateQty}pcs) = ₹${fmt(price*crateQty)}`; }
     el.textContent = text;
-  } else {
-    el.textContent = '';
-  }
+  } else { el.textContent = ''; }
 }
 
 function saveProductPrice() {
@@ -1586,18 +1402,15 @@ function saveProductPrice() {
   const eveningPriceVal = document.getElementById('editEveningPriceVal').value;
   const eveningPrice = eveningPriceVal !== '' ? parseFloat(eveningPriceVal) : null;
   if (mode === 'add') {
-    const newProd = { id: 'c' + uid(), name, price, eveningPrice, crateQty, category, packType, defaultUnit };
-    DB.products.push(newProd);
-    persistDB();
-    toast('✅ Product added!', 'success');
+    DB.products.push({ id: 'c'+uid(), name, price, eveningPrice, crateQty, category, packType, defaultUnit });
+    persistDB(); toast('✅ Product added!', 'success');
   } else {
     const id = document.getElementById('editPriceId').value;
     const p = getProduct(id);
     if (!p) return;
     p.name = name; p.price = price; p.eveningPrice = eveningPrice; p.crateQty = crateQty;
     p.category = category; p.packType = packType; p.defaultUnit = defaultUnit;
-    persistDB();
-    toast('✅ Product updated!', 'success');
+    persistDB(); toast('✅ Product updated!', 'success');
   }
   closeModal('editPriceModal');
   renderProductsPage();
@@ -1625,7 +1438,7 @@ function openEditPrice(id) {
   if (!p) return;
   document.getElementById('editPriceMode').value = 'edit';
   document.getElementById('editPriceId').value = id;
-  document.getElementById('editPriceTitle').textContent = 'Edit Product – ' + p.name;
+  document.getElementById('editPriceTitle').textContent = 'Edit: ' + p.name;
   document.getElementById('editProdName').value = p.name;
   document.getElementById('editPriceVal').value = p.price;
   document.getElementById('editEveningPriceVal').value = p.eveningPrice != null ? p.eveningPrice : '';
@@ -1646,7 +1459,7 @@ function confirmDeleteProduct(id) {
   const p = getProduct(id);
   if (!p) return;
   pendingDelete = { type: 'product', id };
-  document.getElementById('deleteConfirmMsg').textContent = `Delete product "${p.name}"? This cannot be undone. Existing orders referencing this product will still show by ID.`;
+  document.getElementById('deleteConfirmMsg').textContent = `Delete "${p.name}"? Existing orders will still show by ID.`;
   openModal('deleteConfirmModal');
 }
 
@@ -1673,14 +1486,14 @@ function renderAnalytics() {
       <div><div class="stat-label">This Month</div><div class="stat-value blue">₹${fmt(monthTotal)}</div><div class="stat-sub">${monthOrders.length} orders</div></div></div>`;
 
   // Supplier breakdown
-  const supBreakdownHtml = SUPPLIERS.map(sup => {
+  document.getElementById('analyticsSupplierBreakdown').innerHTML = SUPPLIERS.map(sup => {
     const supOrders = DB.orders.filter(o => o.supplier === sup.id).reduce((s,o) => s+calcOrderTotal(o), 0);
     const supPaid = DB.payments.filter(p => p.supplier === sup.id).reduce((s,p) => s+p.amount, 0);
     const supBal = supOrders - supPaid;
     return `<div style="margin-bottom:12px;padding:12px;border-radius:8px;background:${sup.bg};border-left:3px solid ${sup.color};">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
         <span style="font-weight:700;color:${sup.color};">👤 ${sup.name}</span>
-        <span style="font-size:11px;color:${sup.color};font-weight:700;">Balance: ₹${fmt(supBal)}</span>
+        <span style="font-size:11px;color:${sup.color};font-weight:700;">₹${fmt(supBal)}</span>
       </div>
       <div style="display:flex;gap:10px;font-size:11px;">
         <span>Orders: <strong>₹${fmt(supOrders)}</strong></span>
@@ -1688,9 +1501,8 @@ function renderAnalytics() {
       </div>
     </div>`;
   }).join('');
-  document.getElementById('analyticsSupplierBreakdown').innerHTML = supBreakdownHtml;
 
-  // Monthly chart (last 6 months)
+  // Monthly chart
   const months = [];
   for (let i = 5; i >= 0; i--) {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
@@ -1701,20 +1513,18 @@ function renderAnalytics() {
   }
   const maxMonth = Math.max(...months.map(x => x.total), 1);
   document.getElementById('monthlyChart').innerHTML = `
-    <div style="display:flex;align-items:flex-end;gap:8px;height:140px;padding:0 4px;">
+    <div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:0 4px;">
       ${months.map(m => `
         <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
-          <div style="font-size:10px;font-weight:700;color:var(--red);font-family:'IBM Plex Mono',monospace;">₹${m.total>0?(m.total/1000).toFixed(1)+'K':'0'}</div>
-          <div style="background:var(--red);border-radius:4px 4px 0 0;width:100%;height:${Math.max((m.total/maxMonth)*110,2)}px;opacity:0.85;"></div>
+          <div style="font-size:9px;font-weight:700;color:var(--red);font-family:'IBM Plex Mono',monospace;">${m.total>0?(m.total/1000).toFixed(1)+'K':'0'}</div>
+          <div style="background:var(--red);border-radius:4px 4px 0 0;width:100%;height:${Math.max((m.total/maxMonth)*90,2)}px;opacity:0.85;"></div>
           <div style="font-size:10px;color:var(--text-muted);font-weight:600;">${m.label}</div>
         </div>`).join('')}
     </div>`;
 
   // Top products
   const prodTotals = {};
-  DB.orders.forEach(o => o.items.forEach(it => {
-    prodTotals[it.productId] = (prodTotals[it.productId] || 0) + it.amount;
-  }));
+  DB.orders.forEach(o => o.items.forEach(it => { prodTotals[it.productId] = (prodTotals[it.productId] || 0) + it.amount; }));
   const sorted = Object.entries(prodTotals).sort((a,b) => b[1]-a[1]).slice(0, 6);
   const maxProd = Math.max(...sorted.map(x => x[1]), 1);
   document.getElementById('topProductsChart').innerHTML = sorted.length === 0
@@ -1729,7 +1539,7 @@ function renderAnalytics() {
             <span style="font-family:'IBM Plex Mono',monospace;color:var(--red);">₹${fmt(total)}</span>
           </div>
           <div style="background:var(--light-gray);border-radius:4px;height:8px;overflow:hidden;">
-            <div style="background:var(--red);height:100%;width:${pct}%;border-radius:4px;opacity:0.8;transition:width 0.4s;"></div>
+            <div style="background:var(--red);height:100%;width:${pct}%;border-radius:4px;opacity:0.8;"></div>
           </div>
         </div>`;
       }).join('');
@@ -1745,18 +1555,18 @@ function renderAnalytics() {
   }
   const maxDay = Math.max(...dailyData.map(x => x.total), 1);
   document.getElementById('dailyChart').innerHTML = `
-    <div style="display:flex;align-items:flex-end;gap:3px;height:100px;padding:0 2px;overflow-x:auto;">
+    <div style="display:flex;align-items:flex-end;gap:3px;height:100px;padding:0 2px;overflow-x:auto;-webkit-overflow-scrolling:touch;">
       ${dailyData.map(d => `
-        <div title="${fmtDate(d.ds)}: ₹${fmt(d.total)}" style="flex:0 0 auto;width:20px;display:flex;flex-direction:column;align-items:center;gap:2px;">
+        <div title="${fmtDate(d.ds)}: ₹${fmt(d.total)}" style="flex:0 0 auto;width:22px;display:flex;flex-direction:column;align-items:center;gap:2px;">
           <div style="background:${d.total>0?'var(--red)':'var(--light-gray)'};border-radius:3px 3px 0 0;width:100%;height:${Math.max((d.total/maxDay)*80,2)}px;"></div>
           <div style="font-size:9px;color:var(--text-muted);">${d.d}</div>
         </div>`).join('')}
     </div>`;
 
   // Slot breakdown
-  const morning = DB.orders.filter(o => o.type==='morning').reduce((s,o) => s+calcOrderTotal(o), 0);
-  const evening = DB.orders.filter(o => o.type==='evening').reduce((s,o) => s+calcOrderTotal(o), 0);
-  const special = DB.orders.filter(o => o.type==='special').reduce((s,o) => s+calcOrderTotal(o), 0);
+  const morning = DB.orders.filter(o=>o.type==='morning').reduce((s,o)=>s+calcOrderTotal(o),0);
+  const evening = DB.orders.filter(o=>o.type==='evening').reduce((s,o)=>s+calcOrderTotal(o),0);
+  const special = DB.orders.filter(o=>o.type==='special').reduce((s,o)=>s+calcOrderTotal(o),0);
   const slotTotal = morning + evening + special || 1;
   document.getElementById('slotBreakdown').innerHTML = `
     ${[['🌅 Morning', morning, '#b7950b', '#fff8e1'], ['🌆 Evening', evening, 'var(--blue)', 'var(--blue-bg)'], ['⭐ Special', special, 'var(--red)', 'var(--red-bg)']].map(([label,val,color,bg]) => `
@@ -1776,25 +1586,27 @@ function renderAnalytics() {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
     const m = d.toISOString().substr(0, 7);
     const label = d.toLocaleDateString('en-IN', { month: 'short' });
-    const orders = DB.orders.filter(o => o.date && o.date.startsWith(m)).reduce((s,o) => s+calcOrderTotal(o), 0);
-    const paid = DB.payments.filter(p => p.date && p.date.startsWith(m)).reduce((s,p) => s+p.amount, 0);
+    const orders = DB.orders.filter(o => o.date && o.date.startsWith(m)).reduce((s,o)=>s+calcOrderTotal(o),0);
+    const paid = DB.payments.filter(p => p.date && p.date.startsWith(m)).reduce((s,p)=>s+p.amount,0);
     last6.push({ label, orders, paid });
   }
   document.getElementById('paymentTrend').innerHTML = `
-    <table style="width:100%;font-size:12px;border-collapse:collapse;">
-      <thead><tr>
-        <th style="text-align:left;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Month</th>
-        <th style="text-align:right;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Orders</th>
-        <th style="text-align:right;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Paid</th>
-        <th style="text-align:right;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Balance</th>
-      </tr></thead>
-      <tbody>${last6.map(r => `<tr>
-        <td style="padding:5px 8px;font-weight:600;">${r.label}</td>
-        <td style="padding:5px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--red);">₹${fmt(r.orders)}</td>
-        <td style="padding:5px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--green);">₹${fmt(r.paid)}</td>
-        <td style="padding:5px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--orange);font-weight:700;">₹${fmt(r.orders-r.paid)}</td>
-      </tr>`).join('')}</tbody>
-    </table>`;
+    <div class="table-scroll">
+      <table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Month</th>
+          <th style="text-align:right;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Orders</th>
+          <th style="text-align:right;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Paid</th>
+          <th style="text-align:right;padding:5px 8px;font-size:10px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border);">Bal</th>
+        </tr></thead>
+        <tbody>${last6.map(r => `<tr>
+          <td style="padding:5px 8px;font-weight:600;">${r.label}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--red);">₹${fmt(r.orders)}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--green);">₹${fmt(r.paid)}</td>
+          <td style="padding:5px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--orange);font-weight:700;">₹${fmt(r.orders-r.paid)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
 }
 
 // ==========================================================
@@ -1804,7 +1616,7 @@ function initExportPage() {
   document.getElementById('exportDayDate').value = todayStr();
   document.getElementById('exportMonth').value = todayStr().substr(0, 7);
   updateStorageInfo();
-  updateDriveUI(!!_driveToken); // reflect current Drive connection state
+  updateDriveUI(!!_driveToken);
 }
 
 function updateStorageInfo() {
@@ -1814,17 +1626,14 @@ function updateStorageInfo() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) { el.innerHTML = '📦 No data saved yet.'; return; }
     const sizeKB = (new Blob([raw]).size / 1024).toFixed(1);
-    el.innerHTML = `💾 <strong>amul_daily</strong> &nbsp;·&nbsp; ${DB.orders.length} orders &nbsp;·&nbsp; ${DB.payments.length} payments &nbsp;·&nbsp; <span style="font-family:'IBM Plex Mono',monospace;">${sizeKB} KB</span> stored on this device`;
-  } catch(e) {
-    el.innerHTML = 'Storage info unavailable.';
-  }
+    el.innerHTML = `💾 ${DB.orders.length} orders · ${DB.payments.length} payments · ${sizeKB} KB`;
+  } catch(e) { el.innerHTML = 'Storage info unavailable.'; }
 }
 
 function exportDailyPDF() { printDayReport(todayStr()); }
 function exportSpecificDayPDF() { const d = document.getElementById('exportDayDate').value; if (d) printDayReport(d); else toast('Pick a date', 'error'); }
 function exportWeeklyPDF() {
-  const d = new Date();
-  const day = d.getDay() || 7;
+  const d = new Date(); const day = d.getDay() || 7;
   const mon = new Date(d); mon.setDate(d.getDate() - day + 1);
   printLedgerPeriod('Weekly Ledger', mon.toISOString().split('T')[0], todayStr(), null);
 }
@@ -1845,14 +1654,11 @@ function exportYearlyPDF() {
 }
 
 function printDayReport(date) {
-  const orders = DB.orders.filter(o => o.date === date).sort((a,b) => {
-    const t = { morning:0, evening:1, special:2 };
-    return (t[a.type]||0)-(t[b.type]||0);
-  });
+  const orders = DB.orders.filter(o => o.date === date).sort((a,b) => { const t={morning:0,evening:1,special:2}; return (t[a.type]||0)-(t[b.type]||0); });
   const payments = DB.payments.filter(p => p.date === date);
   const totalOrders = orders.reduce((s, o) => s + calcOrderTotal(o), 0);
   const totalPay = payments.reduce((s, p) => s + p.amount, 0);
-  let html = `<div class="print-header"><h1>Raj Mart</h1><p style="font-weight:700;">Daily Report – ${fmtDateLong(date)}</p><p>Printed: ${new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'})}</p></div>`;
+  let html = `<div class="print-header"><h1>Raj Mart</h1><p style="font-weight:700;">Daily Report – ${fmtDateLong(date)}</p></div>`;
   if (orders.length === 0) {
     html += '<p style="text-align:center;color:#666;padding:20px;">No orders on this date.</p>';
   } else {
@@ -1860,9 +1666,9 @@ function printDayReport(date) {
       const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':'⭐';
       const sup = getSupplier(o.supplier);
       html += `<h3>${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} Order${sup?' – '+sup.name:''}</h3>
-        <table class="print-table"><thead><tr><th>Product</th><th class="right">Qty (pcs)</th><th class="right">Crates</th><th class="right">Rate (₹)</th><th class="right">Amount (₹)</th></tr></thead>
+        <table class="print-table"><thead><tr><th>Product</th><th class="right">Pcs</th><th class="right">Crates</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
         <tbody>${o.items.map(it => {
-          const p = DB.products.find(x => x.id===it.productId)||{name:it.productId};
+          const p = DB.products.find(x=>x.id===it.productId)||{name:it.productId};
           const crates = it.crateQtyAtTime ? (it.piecesQty/it.crateQtyAtTime).toFixed(2).replace(/\.?0+$/,'') : '—';
           return `<tr><td>${p.name}</td><td class="right">${it.piecesQty}</td><td class="right">${crates}</td><td class="right">₹${it.priceAtTime.toFixed(3).replace(/\.?0+$/,'')}</td><td class="right">₹${fmt(it.amount)}</td></tr>`;
         }).join('')}</tbody>
@@ -1885,7 +1691,7 @@ function printSingleOrder(orderId) {
   const total = calcOrderTotal(o);
   const sup = getSupplier(o.supplier);
   const html = `<div class="print-header"><h1>Raj Mart</h1><p style="font-weight:700;">${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} Order – ${fmtDateLong(o.date)}</p>${sup?`<p>Supplier: ${sup.name}</p>`:''}</div>
-    <table class="print-table"><thead><tr><th>Product</th><th class="right">Qty (pcs)</th><th class="right">Crates</th><th class="right">Rate (₹)</th><th class="right">Amount (₹)</th></tr></thead>
+    <table class="print-table"><thead><tr><th>Product</th><th class="right">Pcs</th><th class="right">Crates</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
     <tbody>${o.items.map(it=>{const p=DB.products.find(x=>x.id===it.productId)||{name:it.productId};const crates=it.crateQtyAtTime?(it.piecesQty/it.crateQtyAtTime).toFixed(2).replace(/\.?0+$/,''):'—';return`<tr><td>${p.name}</td><td class="right">${it.piecesQty}</td><td class="right">${crates}</td><td class="right">₹${it.priceAtTime.toFixed(3).replace(/\.?0+$/,'')}</td><td class="right">₹${fmt(it.amount)}</td></tr>`;}).join('')}</tbody>
     <tfoot><tr><td colspan="4" style="text-align:right;font-weight:700;padding:7px 8px;border-top:2px solid #ddd;">TOTAL</td><td class="right" style="font-weight:700;font-size:14px;border-top:2px solid #ddd;">₹${fmt(total)}</td></tr></tfoot>
     </table>
@@ -1901,48 +1707,13 @@ function printLedgerPeriod(title, from, to, supplierId) {
   let openingBal = beforeRows.reduce((s, r) => s + r.debit - r.credit, 0);
   let bal = openingBal;
   let totalDebit = 0, totalCredit = 0;
-  const rowsWithBal = rows.map(r => {
-    bal += r.debit - r.credit;
-    totalDebit += r.debit;
-    totalCredit += r.credit;
-    return { ...r, balance: bal };
-  });
+  const rowsWithBal = rows.map(r => { bal += r.debit - r.credit; totalDebit += r.debit; totalCredit += r.credit; return { ...r, balance: bal }; });
   const html = `
-    <div class="print-header">
-      <h1>Raj Mart</h1>
-      <p style="font-size:14px;font-weight:700;">${title}</p>
-      <p>Printed: ${new Date().toLocaleDateString('en-IN', {day:'2-digit',month:'long',year:'numeric'})}</p>
-      ${openingBal ? `<p>Opening Balance: ₹${fmt(openingBal)}</p>` : ''}
-    </div>
+    <div class="print-header"><h1>Raj Mart</h1><p style="font-size:14px;font-weight:700;">${title}</p><p>Printed: ${new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'})}</p>${openingBal?`<p>Opening: ₹${fmt(openingBal)}</p>`:''}</div>
     <table class="print-table">
-      <thead>
-        <tr>
-          <th>Date</th><th>Type</th><th>Supplier</th><th>Description</th>
-          <th class="right">Debit (₹)</th><th class="right">Credit (₹)</th><th class="right balance-cell">Balance (₹)</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rowsWithBal.map(r => {
-          const sup = getSupplier(r.supplier);
-          return `<tr class="${r.type==='payment'?'payment-row':''}">
-            <td>${fmtDate(r.date)}</td>
-            <td>${r.type==='payment'?'PAYMENT':r.type==='special'?'Special':'Regular'}</td>
-            <td>${sup?sup.name:'—'}</td>
-            <td>${r.description}</td>
-            <td class="right">${r.debit>0?'₹'+fmt(r.debit):'—'}</td>
-            <td class="right">${r.credit>0?'₹'+fmt(r.credit):'—'}</td>
-            <td class="right balance-cell">₹${fmt(r.balance)}</td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-      <tfoot>
-        <tr style="font-weight:700;background:#f8f8f8;">
-          <td colspan="4" style="text-align:right;padding:8px;">TOTALS</td>
-          <td class="right" style="color:#c0392b;">₹${fmt(totalDebit)}</td>
-          <td class="right" style="color:#1e8449;">₹${fmt(totalCredit)}</td>
-          <td class="right balance-cell">₹${fmt(rowsWithBal.length?rowsWithBal[rowsWithBal.length-1].balance:0)}</td>
-        </tr>
-      </tfoot>
+      <thead><tr><th>Date</th><th>Type</th><th>Supplier</th><th>Description</th><th class="right">Debit</th><th class="right">Credit</th><th class="right">Balance</th></tr></thead>
+      <tbody>${rowsWithBal.map(r=>{const sup=getSupplier(r.supplier);return`<tr class="${r.type==='payment'?'payment-row':''}"><td>${fmtDate(r.date)}</td><td>${r.type==='payment'?'PAY':r.type==='special'?'Spl':'Reg'}</td><td>${sup?sup.name:'—'}</td><td>${r.description}</td><td class="right">${r.debit>0?'₹'+fmt(r.debit):'—'}</td><td class="right">${r.credit>0?'₹'+fmt(r.credit):'—'}</td><td class="right balance-cell">₹${fmt(r.balance)}</td></tr>`;}).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;background:#f8f8f8;"><td colspan="4" style="text-align:right;padding:8px;">TOTALS</td><td class="right" style="color:#c0392b;">₹${fmt(totalDebit)}</td><td class="right" style="color:#1e8449;">₹${fmt(totalCredit)}</td><td class="right balance-cell">₹${fmt(rowsWithBal.length?rowsWithBal[rowsWithBal.length-1].balance:0)}</td></tr></tfoot>
     </table>
     <div class="print-summary">
       <div class="print-summary-box"><div class="label">Total Orders</div><div class="value">₹${fmt(totalDebit)}</div></div>
@@ -1979,8 +1750,8 @@ function openPrintWindow(content) {
   </head><body>
     ${content}
     <div style="margin-top:28px;text-align:center;">
-      <button onclick="window.print()" style="padding:9px 22px;background:#c0392b;color:white;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;font-family:'IBM Plex Sans',sans-serif;">🖨️ Print / Save as PDF</button>
-      <button onclick="window.close()" style="padding:9px 22px;background:#f2f2f2;border:1px solid #ddd;border-radius:6px;font-size:13px;cursor:pointer;margin-left:8px;font-family:'IBM Plex Sans',sans-serif;">Close</button>
+      <button onclick="window.print()" style="padding:9px 22px;background:#c0392b;color:white;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">🖨️ Print / Save as PDF</button>
+      <button onclick="window.close()" style="padding:9px 22px;background:#f2f2f2;border:1px solid #ddd;border-radius:6px;font-size:13px;cursor:pointer;margin-left:8px;">Close</button>
     </div>
   </body></html>`);
   win.document.close();

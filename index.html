@@ -26,6 +26,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@700&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 
+<!-- ===== Google APIs (Drive sync) ===== -->
+<script src="https://accounts.google.com/gsi/client" async></script>
+<script src="https://apis.google.com/js/api.js" onload="onGapiLoad()" async></script>
+
 <!-- Hidden file input for JSON load — works in ALL browsers -->
 <input type="file" id="jsonFileInput" accept=".json" style="display:none" onchange="handleFileLoad(this)">
 </head>
@@ -47,6 +51,8 @@
     <div class="topbar-actions">
       <!-- Install button: shown only when browser fires beforeinstallprompt -->
       <button id="pwaInstallBtn" style="display:none;background:rgba(255,255,255,0.22);border:1px solid rgba(255,255,255,0.45);color:white;padding:5px 11px;border-radius:6px;cursor:pointer;font-size:11px;font-family:'IBM Plex Sans',sans-serif;font-weight:700;" onclick="pwaInstall()">📲 Install App</button>
+      <!-- Google Drive sync button -->
+      <button id="driveTopBtn" onclick="driveSignIn()" title="Sync with Google Drive" style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);color:white;padding:5px 11px;border-radius:6px;cursor:pointer;font-size:11px;font-family:'IBM Plex Sans',sans-serif;font-weight:700;">☁️ Drive</button>
       <span id="saveIndicator" style="opacity:0;transition:opacity 0.5s;font-size:11px;font-weight:700;color:rgba(255,255,255,0.9);padding:4px 8px;"></span>
       <button onclick="triggerLoadFile()" title="Import data from a backup JSON file">📥 Import JSON</button>
       <button onclick="saveDataFile()" title="Download all data as JSON backup">📤 Backup JSON</button>
@@ -304,6 +310,57 @@
               <div class="desc">Restore from backup file</div>
             </div>
           </div>
+        </div>
+        <!-- ☁️ Google Drive Sync Card -->
+        <div class="card" style="margin-top:0;">
+          <div class="card-header">
+            <div>
+              <div class="card-title" style="margin-bottom:2px;">☁️ Google Drive Sync</div>
+              <p style="font-size:12px;color:var(--text-muted);">Auto-saves to <strong>My Drive → RajMart → amul_daily.json</strong> after every order. Works across devices.</p>
+            </div>
+            <span id="driveLastSync" style="font-size:11px;color:var(--text-muted);"></span>
+          </div>
+
+          <!-- Status bar -->
+          <div id="driveStatusText" style="font-size:12px;color:var(--text-muted);background:var(--light-gray);border-radius:6px;padding:8px 12px;margin-bottom:14px;min-height:34px;">Not connected.</div>
+
+          <!-- Step 1: Client ID -->
+          <div style="margin-bottom:14px;">
+            <div class="section-title">Step 1 — Paste your Google Client ID</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:8px;">
+              <div class="form-group" style="flex:1;min-width:220px;">
+                <label>Google Client ID</label>
+                <input type="text" id="driveClientIdInput" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com" style="font-size:11px;font-family:'IBM Plex Mono',monospace;">
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="saveDriveClientId()" style="margin-bottom:1px;">💾 Save ID</button>
+            </div>
+            <details style="margin-top:10px;">
+              <summary style="font-size:11px;font-weight:700;color:var(--blue);cursor:pointer;user-select:none;">📋 How to get a Google Client ID (one-time, 5 minutes)</summary>
+              <ol style="font-size:11px;color:var(--text-muted);margin-top:8px;padding-left:18px;line-height:2.2;">
+                <li>Open <strong>console.cloud.google.com</strong> on PC</li>
+                <li>New project → name it <strong>RajMart</strong> → Create</li>
+                <li>APIs &amp; Services → <strong>Enable APIs</strong> → search &amp; enable <strong>Google Drive API</strong></li>
+                <li>APIs &amp; Services → <strong>OAuth consent screen</strong> → External → App name: <em>RajMart</em> → your Gmail → Save &amp; Continue (skip scopes) → Save</li>
+                <li>APIs &amp; Services → <strong>Credentials</strong> → + Create → <strong>OAuth Client ID</strong></li>
+                <li>Application type: <strong>Web application</strong></li>
+                <li>Under <em>Authorised JavaScript origins</em> → Add URI:<br>
+                  <code style="background:var(--light-gray);padding:2px 6px;border-radius:4px;font-size:10px;">http://192.168.43.105:8080</code> &nbsp;(local hotspot IP)<br>
+                  <code style="background:var(--light-gray);padding:2px 6px;border-radius:4px;font-size:10px;">https://yourusername.github.io</code> &nbsp;(if hosted)
+                </li>
+                <li>Click <strong>Create</strong> → copy the <strong>Client ID</strong> → paste above → Save ID</li>
+              </ol>
+            </details>
+          </div>
+
+          <!-- Step 2: Buttons -->
+          <div class="section-title">Step 2 — Connect &amp; Sync</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+            <button id="driveSignInBtn"   class="btn btn-primary"   onclick="driveSignIn()">🔑 Connect to Drive</button>
+            <button id="driveUploadBtn"   class="btn btn-info"      onclick="driveUpload(false)" disabled>☁️ Upload Now</button>
+            <button id="driveDownloadBtn" class="btn btn-success"   onclick="driveDownload()"   disabled>📥 Restore from Drive</button>
+            <button id="driveSignOutBtn"  class="btn btn-secondary" onclick="driveSignOut()" style="display:none;">🔌 Disconnect</button>
+          </div>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:10px;">Once connected, the app auto-syncs to Drive 8 seconds after every change. Tap <strong>Upload Now</strong> for an immediate sync.</p>
         </div>
         <div class="card no-print">
           <div class="card-title">Custom Export</div>

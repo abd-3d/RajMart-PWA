@@ -345,8 +345,13 @@ function showPage(page) {
   if (nb) nb.classList.add('active');
   activePage = page;
   // Close mobile menu if open
-  const mobileMenu = document.getElementById('mobileMenu');
-  if (mobileMenu) mobileMenu.classList.remove('open');
+  // Close mobile menu if open
+const mobileMenu = document.getElementById('mobileMenu');
+const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
+const hamburgerBtn = document.getElementById('hamburgerBtn');
+if (mobileMenu) mobileMenu.classList.remove('open');
+if (mobileMenuOverlay) mobileMenuOverlay.classList.remove('open');
+if (hamburgerBtn) hamburgerBtn.classList.remove('open');
   if (page === 'dashboard') renderDashboard();
   else if (page === 'order') initOrderPage();
   else if (page === 'ledger') renderLedger();

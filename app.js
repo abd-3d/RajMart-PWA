@@ -1,6 +1,7 @@
 // ============================================================
 //  RajMart – Amul Milk Manager  |  app.js
 //  v4 – Time-aware ledger, Payment slots, Special morning/evening
+//  v5 – Persistent Google Drive auth (auto-reconnect on reload)
 // ============================================================
 
 // ==========================================================
@@ -105,18 +106,42 @@ function updateServerIndicator() {
 }
 
 // ==========================================================
-//  GOOGLE DRIVE SYNC
+//  GOOGLE DRIVE SYNC — PERSISTENT AUTH
+//
+//  Strategy:
+//  1. On first sign-in (user clicks Connect), request token with
+//     prompt:'consent' to ensure we get a long-lived session.
+//     Store token + expiry timestamp in localStorage.
+//  2. On every app load, call tryAutoReconnectDrive():
+//     a. If stored token is still valid (not expired) → reuse it.
+//     b. If expired → attempt silent refresh with prompt:'none'.
+//        This works as long as the user's Google session is active
+//        in their browser (no popup, totally silent).
+//     c. If silent refresh fails → show "reconnect" nudge (not an
+//        error, just an indicator that Drive needs re-auth).
+//  3. Token is refreshed proactively 5 minutes before expiry.
 // ==========================================================
+
 const DRIVE_FILE_NAME   = 'amul_daily.json';
 const DRIVE_FOLDER_NAME = 'RajMart';
 const DRIVE_SCOPE       = 'https://www.googleapis.com/auth/drive.file';
 
-let DRIVE_CLIENT_ID = localStorage.getItem('rajmart_drive_client_id') || '';
+// Keys used to persist Drive session in localStorage
+const LS_DRIVE_TOKEN      = 'rajmart_drive_token';
+const LS_DRIVE_TOKEN_EXP  = 'rajmart_drive_token_exp';   // Unix ms
+const LS_DRIVE_FILE_ID    = 'rajmart_drive_file_id';
+const LS_DRIVE_FOLDER_ID  = 'rajmart_drive_folder_id';
+const LS_DRIVE_CLIENT_ID  = 'rajmart_drive_client_id';
+
+let DRIVE_CLIENT_ID = localStorage.getItem(LS_DRIVE_CLIENT_ID) || '';
 let _driveToken      = null;
-let _driveFolderId   = null;
-let _driveFileId     = null;
+let _driveTokenExp   = 0;      // Unix ms when token expires
+let _driveFolderId   = localStorage.getItem(LS_DRIVE_FOLDER_ID) || null;
+let _driveFileId     = localStorage.getItem(LS_DRIVE_FILE_ID)   || null;
 let _driveSaveTimer  = null;
+let _driveRefreshTimer = null;
 let _gapiReady       = false;
+let _tokenClient     = null;   // reusable token client
 
 function onGapiLoad() {
   gapi.load('client', async () => {
@@ -124,46 +149,196 @@ function onGapiLoad() {
       await gapi.client.init({});
       await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/drive/v3/rest');
       _gapiReady = true;
+      // Once gapi is ready, attempt silent reconnect
+      tryAutoReconnectDrive();
     } catch(e) { console.warn('[Drive] gapi init failed:', e); }
   });
 }
 
+// ----------------------------------------------------------
+//  AUTO-RECONNECT on app load — called after gapi is ready
+// ----------------------------------------------------------
+async function tryAutoReconnectDrive() {
+  if (!DRIVE_CLIENT_ID) return;                    // No client ID configured
+  if (!window.google || !window.google.accounts) return;
+
+  const storedToken  = localStorage.getItem(LS_DRIVE_TOKEN);
+  const storedExpStr = localStorage.getItem(LS_DRIVE_TOKEN_EXP);
+  const storedExp    = storedExpStr ? parseInt(storedExpStr, 10) : 0;
+  const now          = Date.now();
+  const BUFFER_MS    = 5 * 60 * 1000; // 5 minutes buffer
+
+  if (storedToken && storedExp && (storedExp - now) > BUFFER_MS) {
+    // Token is still fresh — restore session immediately without any popup
+    console.log('[Drive] Restoring session from stored token.');
+    _driveToken    = storedToken;
+    _driveTokenExp = storedExp;
+    gapi.client.setToken({ access_token: _driveToken });
+    updateDriveUI(true);
+    updateDriveStatus('Auto-connected ✅');
+    scheduleTokenRefresh();
+    return;
+  }
+
+  // Token missing or expired — try silent refresh (no popup)
+  console.log('[Drive] Attempting silent token refresh…');
+  updateDriveStatus('Reconnecting to Drive…');
+  silentTokenRefresh().catch(() => {
+    // Silent refresh failed — user's Google session may have expired.
+    // Don't show an error; just show a soft "reconnect" nudge.
+    updateDriveStatus('Drive disconnected. Tap ☁️ to reconnect.');
+    updateDriveUI(false);
+  });
+}
+
+// ----------------------------------------------------------
+//  SILENT TOKEN REFRESH — uses prompt:'none' (no popup/redirect)
+// ----------------------------------------------------------
+function silentTokenRefresh() {
+  return new Promise((resolve, reject) => {
+    if (!DRIVE_CLIENT_ID) { reject(new Error('No client ID')); return; }
+
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: DRIVE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      prompt: 'none',   // ← KEY: no login/consent screen shown
+      callback: (resp) => {
+        if (resp.error) {
+          console.warn('[Drive] Silent refresh failed:', resp.error);
+          reject(new Error(resp.error));
+          return;
+        }
+        _onTokenReceived(resp, true /* silent */);
+        resolve();
+      }
+    });
+
+    client.requestAccessToken();
+  });
+}
+
+// ----------------------------------------------------------
+//  EXPLICIT SIGN-IN (user clicks "Connect" button)
+// ----------------------------------------------------------
 function driveSignIn() {
-  if (!DRIVE_CLIENT_ID) { toast('⚠️ Paste your Google Client ID first — see Export page.', 'error'); showPage('export'); return; }
-  if (!window.google || !window.google.accounts) { toast('⚠️ Google script not loaded. Check internet connection.', 'error'); return; }
+  if (!DRIVE_CLIENT_ID) {
+    toast('⚠️ Paste your Google Client ID first — see Export page.', 'error');
+    showPage('export');
+    return;
+  }
+  if (!window.google || !window.google.accounts) {
+    toast('⚠️ Google script not loaded. Check internet connection.', 'error');
+    return;
+  }
+
   const client = google.accounts.oauth2.initTokenClient({
-    client_id: DRIVE_CLIENT_ID, scope: DRIVE_SCOPE,
-    callback: async (resp) => {
-      if (resp.error) { toast('❌ Drive sign-in failed: ' + resp.error, 'error'); return; }
-      _driveToken = resp.access_token;
-      gapi.client.setToken({ access_token: _driveToken });
-      updateDriveUI(true);
-      toast('✅ Connected to Google Drive!', 'success');
-      await driveFindOrCreateFolder();
-      await driveFindFile();
-      updateDriveStatus(_driveFileId ? 'File found in Drive. Ready to sync.' : 'No backup in Drive yet — will create on first save.');
+    client_id: DRIVE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    // Don't force consent screen on every sign-in after the first time
+    callback: (resp) => {
+      if (resp.error) {
+        toast('❌ Drive sign-in failed: ' + resp.error, 'error');
+        return;
+      }
+      _onTokenReceived(resp, false /* not silent */);
     }
   });
+
   client.requestAccessToken();
 }
 
+// ----------------------------------------------------------
+//  SHARED: handle a new token (from explicit or silent flow)
+// ----------------------------------------------------------
+async function _onTokenReceived(resp, silent) {
+  _driveToken = resp.access_token;
+
+  // expires_in is in seconds; convert to absolute ms timestamp
+  const expiresIn = (resp.expires_in || 3600) * 1000;
+  _driveTokenExp  = Date.now() + expiresIn;
+
+  // Persist token so next app load can reuse it
+  localStorage.setItem(LS_DRIVE_TOKEN,     _driveToken);
+  localStorage.setItem(LS_DRIVE_TOKEN_EXP, String(_driveTokenExp));
+
+  gapi.client.setToken({ access_token: _driveToken });
+  updateDriveUI(true);
+
+  if (!silent) {
+    toast('✅ Connected to Google Drive!', 'success');
+  }
+
+  // Schedule proactive refresh 5 min before expiry
+  scheduleTokenRefresh();
+
+  // Restore folder/file IDs from storage or find them on Drive
+  if (!_driveFolderId) await driveFindOrCreateFolder();
+  if (!_driveFileId)   await driveFindFile();
+
+  updateDriveStatus(_driveFileId
+    ? 'Connected ✅ — file found in Drive.'
+    : 'Connected ✅ — will create backup on first save.'
+  );
+}
+
+// ----------------------------------------------------------
+//  PROACTIVE TOKEN REFRESH — runs 5 min before expiry
+// ----------------------------------------------------------
+function scheduleTokenRefresh() {
+  clearTimeout(_driveRefreshTimer);
+  const msUntilExpiry = _driveTokenExp - Date.now();
+  const refreshIn     = Math.max(msUntilExpiry - 5 * 60 * 1000, 0);
+
+  console.log(`[Drive] Token refresh scheduled in ${Math.round(refreshIn/60000)} min.`);
+
+  _driveRefreshTimer = setTimeout(() => {
+    console.log('[Drive] Proactively refreshing token…');
+    silentTokenRefresh().catch(() => {
+      console.warn('[Drive] Proactive refresh failed. Will retry on next interaction.');
+    });
+  }, refreshIn);
+}
+
+// ----------------------------------------------------------
+//  SIGN OUT
+// ----------------------------------------------------------
 function driveSignOut() {
-  if (_driveToken && window.google) { google.accounts.oauth2.revoke(_driveToken, () => {}); }
-  _driveToken = null; _driveFolderId = null; _driveFileId = null;
+  if (_driveToken && window.google) {
+    google.accounts.oauth2.revoke(_driveToken, () => {});
+  }
+  _driveToken    = null;
+  _driveTokenExp = 0;
+  _driveFolderId = null;
+  _driveFileId   = null;
+
   clearTimeout(_driveSaveTimer);
+  clearTimeout(_driveRefreshTimer);
+
+  // Clear all persisted Drive data
+  localStorage.removeItem(LS_DRIVE_TOKEN);
+  localStorage.removeItem(LS_DRIVE_TOKEN_EXP);
+  localStorage.removeItem(LS_DRIVE_FILE_ID);
+  localStorage.removeItem(LS_DRIVE_FOLDER_ID);
+
   updateDriveUI(false);
   toast('Disconnected from Google Drive.', 'info');
 }
 
+// ----------------------------------------------------------
+//  SAVE CLIENT ID
+// ----------------------------------------------------------
 function saveDriveClientId() {
   const val = (document.getElementById('driveClientIdInput').value || '').trim();
   if (!val) { toast('Paste a Client ID first.', 'error'); return; }
   DRIVE_CLIENT_ID = val;
-  localStorage.setItem('rajmart_drive_client_id', val);
+  localStorage.setItem(LS_DRIVE_CLIENT_ID, val);
   toast('✅ Client ID saved!', 'success');
   updateDriveUI(false);
 }
 
+// ----------------------------------------------------------
+//  UI HELPERS
+// ----------------------------------------------------------
 function updateDriveUI(connected) {
   const topBtn = document.getElementById('driveTopBtn');
   if (topBtn) {
@@ -171,7 +346,10 @@ function updateDriveUI(connected) {
     topBtn.style.background  = connected ? 'rgba(30,132,73,0.3)' : 'rgba(255,255,255,0.15)';
     topBtn.style.borderColor = connected ? 'rgba(30,132,73,0.7)' : 'rgba(255,255,255,0.3)';
   }
-  ['driveUploadBtn','driveDownloadBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = !connected; });
+  ['driveUploadBtn','driveDownloadBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !connected;
+  });
   const signInBtn  = document.getElementById('driveSignInBtn');
   const signOutBtn = document.getElementById('driveSignOutBtn');
   if (signInBtn)  signInBtn.style.display  = connected ? 'none' : 'inline-flex';
@@ -180,50 +358,133 @@ function updateDriveUI(connected) {
   if (inp && DRIVE_CLIENT_ID && !inp.value) inp.value = DRIVE_CLIENT_ID;
 }
 
-function updateDriveStatus(msg) { const el = document.getElementById('driveStatusText'); if (el) el.textContent = msg; }
+function updateDriveStatus(msg) {
+  const el = document.getElementById('driveStatusText');
+  if (el) el.textContent = msg;
+}
+
 function updateDriveLastSync() {
   const el = document.getElementById('driveLastSync');
   if (el) el.textContent = 'Last synced: ' + new Date().toLocaleTimeString('en-IN');
   updateDriveStatus('Synced ✅');
 }
 
+// ----------------------------------------------------------
+//  ENSURE TOKEN IS VALID before any Drive operation
+//  (handles the case where the tab was left open for hours)
+// ----------------------------------------------------------
+async function ensureValidToken() {
+  if (!_driveToken) return false;
+  const BUFFER_MS = 60 * 1000; // 1 min buffer
+  if (Date.now() < _driveTokenExp - BUFFER_MS) return true; // still valid
+
+  // Token expired mid-session — try silent refresh
+  try {
+    await silentTokenRefresh();
+    return true;
+  } catch(e) {
+    updateDriveStatus('Session expired. Tap ☁️ to reconnect.');
+    updateDriveUI(false);
+    return false;
+  }
+}
+
+// ----------------------------------------------------------
+//  FOLDER MANAGEMENT
+// ----------------------------------------------------------
 async function driveFindOrCreateFolder() {
   if (!_driveToken) return;
   try {
-    const res = await gapi.client.drive.files.list({ q: `name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`, fields: 'files(id,name)', spaces: 'drive' });
-    if (res.result.files.length > 0) { _driveFolderId = res.result.files[0].id; }
-    else {
-      const folder = await gapi.client.drive.files.create({ resource: { name: DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' }, fields: 'id' });
+    const res = await gapi.client.drive.files.list({
+      q: `name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name)',
+      spaces: 'drive'
+    });
+    if (res.result.files.length > 0) {
+      _driveFolderId = res.result.files[0].id;
+    } else {
+      const folder = await gapi.client.drive.files.create({
+        resource: { name: DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' },
+        fields: 'id'
+      });
       _driveFolderId = folder.result.id;
       toast('📁 Created "RajMart" folder in Google Drive.', 'info');
     }
-  } catch(e) { console.error('[Drive] Folder error:', e); updateDriveStatus('Folder error: ' + e.message); }
+    // Persist folder ID so we don't need to search again
+    localStorage.setItem(LS_DRIVE_FOLDER_ID, _driveFolderId);
+  } catch(e) {
+    console.error('[Drive] Folder error:', e);
+    updateDriveStatus('Folder error: ' + e.message);
+  }
 }
 
 async function driveFindFile() {
   if (!_driveToken || !_driveFolderId) return;
   try {
-    const res = await gapi.client.drive.files.list({ q: `name='${DRIVE_FILE_NAME}' and '${_driveFolderId}' in parents and trashed=false`, fields: 'files(id,name,modifiedTime)', spaces: 'drive' });
-    if (res.result.files.length > 0) { _driveFileId = res.result.files[0].id; }
-  } catch(e) { console.error('[Drive] File search error:', e); }
+    const res = await gapi.client.drive.files.list({
+      q: `name='${DRIVE_FILE_NAME}' and '${_driveFolderId}' in parents and trashed=false`,
+      fields: 'files(id,name,modifiedTime)',
+      spaces: 'drive'
+    });
+    if (res.result.files.length > 0) {
+      _driveFileId = res.result.files[0].id;
+      // Persist file ID
+      localStorage.setItem(LS_DRIVE_FILE_ID, _driveFileId);
+    }
+  } catch(e) {
+    console.error('[Drive] File search error:', e);
+  }
 }
 
+// ----------------------------------------------------------
+//  UPLOAD / DOWNLOAD
+// ----------------------------------------------------------
 async function driveUpload(silent = false) {
-  if (!_driveToken) { if (!silent) toast('⚠️ Connect to Google Drive first.', 'error'); return; }
+  if (!_driveToken) {
+    if (!silent) toast('⚠️ Connect to Google Drive first.', 'error');
+    return;
+  }
+
+  // Ensure token is still valid
+  const valid = await ensureValidToken();
+  if (!valid) {
+    if (!silent) toast('⚠️ Drive session expired. Tap ☁️ to reconnect.', 'error');
+    return;
+  }
+
   if (!_driveFolderId) await driveFindOrCreateFolder();
   const content  = JSON.stringify(DB, null, 2);
   const metadata = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
   if (!_driveFileId) metadata.parents = [_driveFolderId];
   const boundary = 'rajmart_multipart';
-  const body = [`--${boundary}`, 'Content-Type: application/json; charset=UTF-8', '', JSON.stringify(metadata), `--${boundary}`, 'Content-Type: application/json', '', content, `--${boundary}--`].join('\r\n');
+  const body = [
+    `--${boundary}`, 'Content-Type: application/json; charset=UTF-8', '',
+    JSON.stringify(metadata),
+    `--${boundary}`, 'Content-Type: application/json', '',
+    content,
+    `--${boundary}--`
+  ].join('\r\n');
   const method = _driveFileId ? 'PATCH' : 'POST';
-  const url = _driveFileId ? `https://www.googleapis.com/upload/drive/v3/files/${_driveFileId}?uploadType=multipart` : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+  const url = _driveFileId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${_driveFileId}?uploadType=multipart`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
   try {
     if (!silent) updateDriveStatus('Uploading…');
-    const res = await fetch(url, { method, headers: { 'Authorization': 'Bearer ' + _driveToken, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
-    if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Upload failed'); }
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': 'Bearer ' + _driveToken,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'Upload failed');
+    }
     const data = await res.json();
     _driveFileId = data.id;
+    localStorage.setItem(LS_DRIVE_FILE_ID, _driveFileId);
     if (!silent) toast('☁️ Saved to Google Drive!', 'success');
     updateDriveLastSync();
   } catch(e) {
@@ -234,12 +495,19 @@ async function driveUpload(silent = false) {
 
 async function driveDownload() {
   if (!_driveToken) { toast('⚠️ Connect to Google Drive first.', 'error'); return; }
+
+  const valid = await ensureValidToken();
+  if (!valid) { toast('⚠️ Drive session expired. Tap ☁️ to reconnect.', 'error'); return; }
+
   if (!_driveFolderId) await driveFindOrCreateFolder();
   if (!_driveFileId)   await driveFindFile();
   if (!_driveFileId)   { toast('No backup found in Drive yet.', 'info'); return; }
   try {
     updateDriveStatus('Downloading…');
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`, { headers: { 'Authorization': 'Bearer ' + _driveToken } });
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`,
+      { headers: { 'Authorization': 'Bearer ' + _driveToken } }
+    );
     if (!res.ok) throw new Error('Download request failed');
     const loaded = await res.json();
     if (!loaded.products) loaded.products = JSON.parse(JSON.stringify(DEFAULT_PRODUCTS));
@@ -250,7 +518,10 @@ async function driveDownload() {
     showPage(activePage);
     toast('✅ Data restored from Google Drive!', 'success');
     updateDriveLastSync();
-  } catch(e) { toast('❌ Drive download failed: ' + e.message, 'error'); updateDriveStatus('Download failed: ' + e.message); }
+  } catch(e) {
+    toast('❌ Drive download failed: ' + e.message, 'error');
+    updateDriveStatus('Download failed: ' + e.message);
+  }
 }
 
 function scheduleDriveUpload() {
@@ -372,13 +643,6 @@ function supplierBadge(supplierId) {
 
 // ==========================================================
 //  TIME-AWARE LEDGER SORT KEY
-//  Order within same date:
-//  0 = morning order
-//  1 = payment (morning slot)
-//  2 = evening order
-//  3 = payment (evening slot)
-//  4 = special-morning order
-//  5 = special-evening order
 // ==========================================================
 function rowSortKey(r) {
   if (r.type === 'morning') return 0;
@@ -390,7 +654,6 @@ function rowSortKey(r) {
   return 6;
 }
 
-// Helper: icon for a row in ledger
 function rowIcon(r) {
   if (r.type === 'morning') return '🌅';
   if (r.type === 'evening') return '🌆';
@@ -399,7 +662,6 @@ function rowIcon(r) {
   return '📋';
 }
 
-// Helper: badge css class for a row
 function rowBadgeClass(r) {
   if (r.type === 'morning') return 'badge-morning';
   if (r.type === 'evening') return 'badge-evening';
@@ -555,7 +817,6 @@ function setOrderType(type) {
   const titles = { morning:'Products – Morning', evening:'Products – Evening', special:'Products – Special' };
   document.getElementById('productSectionTitle').textContent = titles[type];
 
-  // Show/hide special slot toggle
   const wrap = document.getElementById('specialSlotWrap');
   if (wrap) wrap.style.display = type === 'special' ? 'block' : 'none';
 
@@ -911,7 +1172,6 @@ function openEditOrder(orderId) {
   document.getElementById('editOrderDate').value = o.date;
   document.getElementById('editOrderNote').value = o.note || '';
   setEditOrderType(o.type);
-  // Restore special slot if applicable
   if (o.type === 'special') { setTimeout(() => setEditSpecialSlot(o.specialSlot || 'morning'), 50); }
   openModal('editOrderModal');
 }
@@ -1165,7 +1425,6 @@ function buildAllLedgerRows(supplierId) {
     });
   });
 
-  // TIME-AWARE SORT: by date first, then by slot position within the day
   rows.sort((a, b) => a.date.localeCompare(b.date) || rowSortKey(a) - rowSortKey(b));
   return rows;
 }
@@ -1788,3 +2047,5 @@ document.getElementById('editPackType').addEventListener('change', updateEditPre
 // ==========================================================
 showPage('dashboard');
 loadFromLocalStorage();
+// Note: Drive auto-reconnect happens inside onGapiLoad() → tryAutoReconnectDrive()
+// which is called once gapi finishes loading (triggered by the script tag in index.html)

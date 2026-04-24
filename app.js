@@ -1,6 +1,6 @@
 // ============================================================
 //  RajMart – Amul Milk Manager  |  app.js
-//  v3 – Multi-Supplier (Ajaybhai, Gaffarbhai, Mukeshbhai)
+//  v4 – Time-aware ledger, Payment slots, Special morning/evening
 // ============================================================
 
 // ==========================================================
@@ -34,7 +34,7 @@ const DEFAULT_PRODUCTS = [
 ];
 
 const INITIAL_DB = {
-  version: 3,
+  version: 4,
   products: JSON.parse(JSON.stringify(DEFAULT_PRODUCTS)),
   orders: [],
   payments: []
@@ -47,6 +47,7 @@ let DB = JSON.parse(JSON.stringify(INITIAL_DB));
 let activePage = 'dashboard';
 let orderType = 'morning';
 let orderSupplier = 'ajay';
+let specialSlot = 'morning'; // for new special orders
 let pendingDelete = null;
 let currentLedgerFilter = 'all';
 let currentLedgerSupplier = 'all';
@@ -55,6 +56,7 @@ let editingOrderId = null;
 let editOrderItems = {};
 let editOrderType = 'morning';
 let editOrderSupplier = 'ajay';
+let editSpecialSlot = 'morning';
 let editingPaymentId = null;
 
 // ==========================================================
@@ -97,7 +99,6 @@ function flashSaveIndicator() {
 }
 
 function saveToServer() { saveToLocalStorage(); }
-
 function updateServerIndicator() {
   const el = document.getElementById('serverIndicator');
   if (el) el.style.display = 'none';
@@ -123,25 +124,15 @@ function onGapiLoad() {
       await gapi.client.init({});
       await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/drive/v3/rest');
       _gapiReady = true;
-    } catch(e) {
-      console.warn('[Drive] gapi init failed:', e);
-    }
+    } catch(e) { console.warn('[Drive] gapi init failed:', e); }
   });
 }
 
 function driveSignIn() {
-  if (!DRIVE_CLIENT_ID) {
-    toast('⚠️ Paste your Google Client ID first — see Export page.', 'error');
-    showPage('export');
-    return;
-  }
-  if (!window.google || !window.google.accounts) {
-    toast('⚠️ Google script not loaded. Check internet connection.', 'error');
-    return;
-  }
+  if (!DRIVE_CLIENT_ID) { toast('⚠️ Paste your Google Client ID first — see Export page.', 'error'); showPage('export'); return; }
+  if (!window.google || !window.google.accounts) { toast('⚠️ Google script not loaded. Check internet connection.', 'error'); return; }
   const client = google.accounts.oauth2.initTokenClient({
-    client_id: DRIVE_CLIENT_ID,
-    scope: DRIVE_SCOPE,
+    client_id: DRIVE_CLIENT_ID, scope: DRIVE_SCOPE,
     callback: async (resp) => {
       if (resp.error) { toast('❌ Drive sign-in failed: ' + resp.error, 'error'); return; }
       _driveToken = resp.access_token;
@@ -150,11 +141,7 @@ function driveSignIn() {
       toast('✅ Connected to Google Drive!', 'success');
       await driveFindOrCreateFolder();
       await driveFindFile();
-      if (_driveFileId) {
-        updateDriveStatus('File found in Drive. Ready to sync.');
-      } else {
-        updateDriveStatus('No backup in Drive yet — will create on first save.');
-      }
+      updateDriveStatus(_driveFileId ? 'File found in Drive. Ready to sync.' : 'No backup in Drive yet — will create on first save.');
     }
   });
   client.requestAccessToken();
@@ -180,25 +167,20 @@ function saveDriveClientId() {
 function updateDriveUI(connected) {
   const topBtn = document.getElementById('driveTopBtn');
   if (topBtn) {
-    topBtn.textContent  = connected ? '☁️✅' : '☁️';
-    topBtn.style.background   = connected ? 'rgba(30,132,73,0.3)' : 'rgba(255,255,255,0.15)';
-    topBtn.style.borderColor  = connected ? 'rgba(30,132,73,0.7)' : 'rgba(255,255,255,0.3)';
+    topBtn.textContent = connected ? '☁️✅' : '☁️';
+    topBtn.style.background  = connected ? 'rgba(30,132,73,0.3)' : 'rgba(255,255,255,0.15)';
+    topBtn.style.borderColor = connected ? 'rgba(30,132,73,0.7)' : 'rgba(255,255,255,0.3)';
   }
-  const ids = ['driveUploadBtn','driveDownloadBtn'];
-  ids.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = !connected; });
+  ['driveUploadBtn','driveDownloadBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = !connected; });
   const signInBtn  = document.getElementById('driveSignInBtn');
   const signOutBtn = document.getElementById('driveSignOutBtn');
-  if (signInBtn)  signInBtn.style.display  = connected ? 'none'        : 'inline-flex';
+  if (signInBtn)  signInBtn.style.display  = connected ? 'none' : 'inline-flex';
   if (signOutBtn) signOutBtn.style.display = connected ? 'inline-flex' : 'none';
   const inp = document.getElementById('driveClientIdInput');
   if (inp && DRIVE_CLIENT_ID && !inp.value) inp.value = DRIVE_CLIENT_ID;
 }
 
-function updateDriveStatus(msg) {
-  const el = document.getElementById('driveStatusText');
-  if (el) el.textContent = msg;
-}
-
+function updateDriveStatus(msg) { const el = document.getElementById('driveStatusText'); if (el) el.textContent = msg; }
 function updateDriveLastSync() {
   const el = document.getElementById('driveLastSync');
   if (el) el.textContent = 'Last synced: ' + new Date().toLocaleTimeString('en-IN');
@@ -208,17 +190,10 @@ function updateDriveLastSync() {
 async function driveFindOrCreateFolder() {
   if (!_driveToken) return;
   try {
-    const res = await gapi.client.drive.files.list({
-      q: `name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      fields: 'files(id,name)', spaces: 'drive'
-    });
-    if (res.result.files.length > 0) {
-      _driveFolderId = res.result.files[0].id;
-    } else {
-      const folder = await gapi.client.drive.files.create({
-        resource: { name: DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' },
-        fields: 'id'
-      });
+    const res = await gapi.client.drive.files.list({ q: `name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`, fields: 'files(id,name)', spaces: 'drive' });
+    if (res.result.files.length > 0) { _driveFolderId = res.result.files[0].id; }
+    else {
+      const folder = await gapi.client.drive.files.create({ resource: { name: DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' }, fields: 'id' });
       _driveFolderId = folder.result.id;
       toast('📁 Created "RajMart" folder in Google Drive.', 'info');
     }
@@ -228,10 +203,7 @@ async function driveFindOrCreateFolder() {
 async function driveFindFile() {
   if (!_driveToken || !_driveFolderId) return;
   try {
-    const res = await gapi.client.drive.files.list({
-      q: `name='${DRIVE_FILE_NAME}' and '${_driveFolderId}' in parents and trashed=false`,
-      fields: 'files(id,name,modifiedTime)', spaces: 'drive'
-    });
+    const res = await gapi.client.drive.files.list({ q: `name='${DRIVE_FILE_NAME}' and '${_driveFolderId}' in parents and trashed=false`, fields: 'files(id,name,modifiedTime)', spaces: 'drive' });
     if (res.result.files.length > 0) { _driveFileId = res.result.files[0].id; }
   } catch(e) { console.error('[Drive] File search error:', e); }
 }
@@ -243,12 +215,9 @@ async function driveUpload(silent = false) {
   const metadata = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
   if (!_driveFileId) metadata.parents = [_driveFolderId];
   const boundary = 'rajmart_multipart';
-  const body = [`--${boundary}`, 'Content-Type: application/json; charset=UTF-8', '', JSON.stringify(metadata),
-    `--${boundary}`, 'Content-Type: application/json', '', content, `--${boundary}--`].join('\r\n');
+  const body = [`--${boundary}`, 'Content-Type: application/json; charset=UTF-8', '', JSON.stringify(metadata), `--${boundary}`, 'Content-Type: application/json', '', content, `--${boundary}--`].join('\r\n');
   const method = _driveFileId ? 'PATCH' : 'POST';
-  const url = _driveFileId
-    ? `https://www.googleapis.com/upload/drive/v3/files/${_driveFileId}?uploadType=multipart`
-    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+  const url = _driveFileId ? `https://www.googleapis.com/upload/drive/v3/files/${_driveFileId}?uploadType=multipart` : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
   try {
     if (!silent) updateDriveStatus('Uploading…');
     const res = await fetch(url, { method, headers: { 'Authorization': 'Bearer ' + _driveToken, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
@@ -270,8 +239,7 @@ async function driveDownload() {
   if (!_driveFileId)   { toast('No backup found in Drive yet.', 'info'); return; }
   try {
     updateDriveStatus('Downloading…');
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`,
-      { headers: { 'Authorization': 'Bearer ' + _driveToken } });
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`, { headers: { 'Authorization': 'Bearer ' + _driveToken } });
     if (!res.ok) throw new Error('Download request failed');
     const loaded = await res.json();
     if (!loaded.products) loaded.products = JSON.parse(JSON.stringify(DEFAULT_PRODUCTS));
@@ -282,10 +250,7 @@ async function driveDownload() {
     showPage(activePage);
     toast('✅ Data restored from Google Drive!', 'success');
     updateDriveLastSync();
-  } catch(e) {
-    toast('❌ Drive download failed: ' + e.message, 'error');
-    updateDriveStatus('Download failed: ' + e.message);
-  }
+  } catch(e) { toast('❌ Drive download failed: ' + e.message, 'error'); updateDriveStatus('Download failed: ' + e.message); }
 }
 
 function scheduleDriveUpload() {
@@ -344,14 +309,8 @@ function showPage(page) {
   const nb = document.getElementById('nav-' + page);
   if (nb) nb.classList.add('active');
   activePage = page;
-  // Close mobile menu if open
-  // Close mobile menu if open
-const mobileMenu = document.getElementById('mobileMenu');
-const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
-const hamburgerBtn = document.getElementById('hamburgerBtn');
-if (mobileMenu) mobileMenu.classList.remove('open');
-if (mobileMenuOverlay) mobileMenuOverlay.classList.remove('open');
-if (hamburgerBtn) hamburgerBtn.classList.remove('open');
+  const mobileMenu = document.getElementById('mobileMenu');
+  if (mobileMenu) mobileMenu.classList.remove('open');
   if (page === 'dashboard') renderDashboard();
   else if (page === 'order') initOrderPage();
   else if (page === 'ledger') renderLedger();
@@ -384,20 +343,16 @@ function getEffectivePriceForSupplier(p, supplierId) {
   if (sup && sup.priceType === 'evening' && p.eveningPrice != null) return p.eveningPrice;
   return p.price;
 }
-
 function getEffectivePrice(p, type) {
   if (type === 'evening' && p.eveningPrice != null) return p.eveningPrice;
   return p.price;
 }
-
 function calcOrderTotal(order) { return order.items.reduce((s, it) => s + it.amount, 0); }
-
 function calcBalance(supplierId) {
   const orders = supplierId ? DB.orders.filter(o => o.supplier === supplierId) : DB.orders;
   const payments = supplierId ? DB.payments.filter(p => p.supplier === supplierId) : DB.payments;
   return orders.reduce((s, o) => s + calcOrderTotal(o), 0) - payments.reduce((s, p) => s + p.amount, 0);
 }
-
 function toast(msg, type = 'info') {
   const t = document.createElement('div');
   t.className = 'toast ' + type;
@@ -409,13 +364,80 @@ function toast(msg, type = 'info') {
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
-// ==========================================================
-//  SUPPLIER BADGE HELPER
-// ==========================================================
 function supplierBadge(supplierId) {
   const sup = getSupplier(supplierId);
   if (!sup) return '';
   return `<span class="sup-badge" style="background:${sup.bg};color:${sup.color};">👤 ${sup.name}</span>`;
+}
+
+// ==========================================================
+//  TIME-AWARE LEDGER SORT KEY
+//  Order within same date:
+//  0 = morning order
+//  1 = payment (morning slot)
+//  2 = evening order
+//  3 = payment (evening slot)
+//  4 = special-morning order
+//  5 = special-evening order
+// ==========================================================
+function rowSortKey(r) {
+  if (r.type === 'morning') return 0;
+  if (r.type === 'payment' && (r.timeSlot === 'morning' || !r.timeSlot)) return 1;
+  if (r.type === 'evening') return 2;
+  if (r.type === 'payment' && r.timeSlot === 'evening') return 3;
+  if (r.type === 'special' && (r.specialSlot === 'morning' || !r.specialSlot)) return 4;
+  if (r.type === 'special' && r.specialSlot === 'evening') return 5;
+  return 6;
+}
+
+// Helper: icon for a row in ledger
+function rowIcon(r) {
+  if (r.type === 'morning') return '🌅';
+  if (r.type === 'evening') return '🌆';
+  if (r.type === 'payment') return r.timeSlot === 'evening' ? '💳🌆' : '💳🌅';
+  if (r.type === 'special') return r.specialSlot === 'evening' ? '🌆⭐' : '🌅⭐';
+  return '📋';
+}
+
+// Helper: badge css class for a row
+function rowBadgeClass(r) {
+  if (r.type === 'morning') return 'badge-morning';
+  if (r.type === 'evening') return 'badge-evening';
+  if (r.type === 'payment') return 'badge-payment';
+  if (r.type === 'special') return r.specialSlot === 'evening' ? 'badge-special-eve' : 'badge-special';
+  return '';
+}
+
+// ==========================================================
+//  SLOT TOGGLE HELPERS
+// ==========================================================
+function setSpecialSlot(slot) {
+  specialSlot = slot;
+  const mBtn = document.getElementById('specialSlotMorning');
+  const eBtn = document.getElementById('specialSlotEvening');
+  if (mBtn) mBtn.className = slot === 'morning' ? 'active morning' : '';
+  if (eBtn) eBtn.className = slot === 'evening' ? 'active evening' : '';
+  const sel = document.getElementById('specialSlotSelect');
+  if (sel) sel.value = slot;
+}
+
+function setEditSpecialSlot(slot) {
+  editSpecialSlot = slot;
+  const mBtn = document.getElementById('editSpecialSlotMorning');
+  const eBtn = document.getElementById('editSpecialSlotEvening');
+  if (mBtn) mBtn.className = slot === 'morning' ? 'active morning' : '';
+  if (eBtn) eBtn.className = slot === 'evening' ? 'active evening' : '';
+  const sel = document.getElementById('editSpecialSlotSelect');
+  if (sel) sel.value = slot;
+}
+
+function setPayModalSlot(slot) {
+  const inp = document.getElementById('payModalSlot');
+  if (inp) inp.value = slot;
+  const mBtn = document.getElementById('payModalSlotMorning');
+  const eBtn = document.getElementById('payModalSlotEvening');
+  if (mBtn) mBtn.className = slot === 'morning' ? 'active morning' : '';
+  if (eBtn) eBtn.className = slot === 'evening' ? 'active evening' : '';
 }
 
 // ==========================================================
@@ -453,7 +475,6 @@ function renderDashboard() {
       <div><div class="stat-label">Outstanding</div><div class="stat-value orange">₹${fmt(balance)}</div><div class="stat-sub">All suppliers</div></div>
     </div>`;
 
-  // Supplier balances — using CSS class, mobile-friendly
   let supBalHtml = SUPPLIERS.map(sup => {
     const bal = calcBalance(sup.id);
     return `<div class="sup-bal-card" style="background:${sup.bg};">
@@ -467,16 +488,16 @@ function renderDashboard() {
   if (recent.length === 0) {
     document.getElementById('dashRecentOrders').innerHTML = '<div class="empty-state"><div class="icon">📋</div><div class="text">No orders yet. Click New Order to start.</div></div>';
   } else {
-    // Mobile-friendly recent orders — card style on mobile, table on desktop
     document.getElementById('dashRecentOrders').innerHTML = `
       <div class="table-scroll">
         <table class="data-table">
           <thead><tr><th>Date</th><th>Slot</th><th>Supplier</th><th class="right">Total (₹)</th></tr></thead>
           <tbody>${recent.map(o => {
             const sup = getSupplier(o.supplier);
+            const slotLabel = o.type==='morning'?'🌅 Morn':o.type==='evening'?'🌆 Eve':(o.specialSlot==='evening'?'🌆⭐ Spl':'🌅⭐ Spl');
             return `<tr style="cursor:pointer;" onclick="showOrderDetail('${o.id}')">
               <td>${fmtDate(o.date)}</td>
-              <td><span class="type-badge badge-${o.type}">${o.type==='morning'?'🌅 Morn':o.type==='evening'?'🌆 Eve':'⭐ Spl'}</span></td>
+              <td><span class="type-badge badge-${o.type}">${slotLabel}</span></td>
               <td style="font-size:11px;font-weight:600;color:${sup?sup.color:'var(--text-muted)'};">${sup?sup.name:'—'}</td>
               <td class="right mono" style="font-weight:700;">₹${fmt(calcOrderTotal(o))}</td>
             </tr>`;
@@ -488,18 +509,9 @@ function renderDashboard() {
   const pct = totalOrders > 0 ? Math.round((totalPayments/totalOrders)*100) : 0;
   document.getElementById('dashBalance').innerHTML = `
     <div class="balance-grid">
-      <div class="balance-box red-box">
-        <div class="balance-label">Total Orders</div>
-        <div class="balance-amount" style="color:var(--red);">₹${fmt(totalOrders)}</div>
-      </div>
-      <div class="balance-box green-box">
-        <div class="balance-label">Total Paid</div>
-        <div class="balance-amount" style="color:var(--green);">₹${fmt(totalPayments)}</div>
-      </div>
-      <div class="balance-box orange-box">
-        <div class="balance-label">Remaining</div>
-        <div class="balance-amount" style="color:var(--orange);">₹${fmt(balance)}</div>
-      </div>
+      <div class="balance-box red-box"><div class="balance-label">Total Orders</div><div class="balance-amount" style="color:var(--red);">₹${fmt(totalOrders)}</div></div>
+      <div class="balance-box green-box"><div class="balance-label">Total Paid</div><div class="balance-amount" style="color:var(--green);">₹${fmt(totalPayments)}</div></div>
+      <div class="balance-box orange-box"><div class="balance-label">Remaining</div><div class="balance-amount" style="color:var(--orange);">₹${fmt(balance)}</div></div>
     </div>
     <div style="background:var(--light-gray);border-radius:6px;overflow:hidden;height:10px;margin:12px 0 6px;">
       <div style="height:100%;background:var(--green);border-radius:6px;width:${pct}%;transition:width 0.5s;"></div>
@@ -542,6 +554,11 @@ function setOrderType(type) {
   });
   const titles = { morning:'Products – Morning', evening:'Products – Evening', special:'Products – Special' };
   document.getElementById('productSectionTitle').textContent = titles[type];
+
+  // Show/hide special slot toggle
+  const wrap = document.getElementById('specialSlotWrap');
+  if (wrap) wrap.style.display = type === 'special' ? 'block' : 'none';
+
   renderSupplierSelector();
   orderItems = {};
   renderProductList();
@@ -589,9 +606,7 @@ function productRowHTML(p, isSpecialCategory) {
   const effectivePrice = getEffectivePriceForSupplier(p, orderSupplier);
   const sup = getSupplier(orderSupplier);
   const isEveningDiff = sup && sup.priceType === 'evening' && p.eveningPrice != null;
-  const priceBadge = isEveningDiff
-    ? `<span class="eve-badge">EVE</span>`
-    : '';
+  const priceBadge = isEveningDiff ? `<span class="eve-badge">EVE</span>` : '';
   return `<div class="product-row ${hasVal ? 'has-value' : ''}" id="prodrow-${p.id}">
     <div class="prod-info">
       <div class="prod-name">${p.name}${priceBadge}</div>
@@ -605,11 +620,8 @@ function productRowHTML(p, isSpecialCategory) {
              <button class="${item.unit==='pack'?'active':''}" onclick="setUnit('${p.id}','pack')" ${!p.crateQty?'disabled':''}>${packName}</button>`
         }
       </div>
-      <input class="qty-input" type="number" min="0" step="1"
-        placeholder="Qty"
-        value="${item.qty}"
-        oninput="updateQty('${p.id}', this.value)"
-        id="qty-${p.id}">
+      <input class="qty-input" type="number" min="0" step="1" placeholder="Qty" value="${item.qty}"
+        oninput="updateQty('${p.id}', this.value)" id="qty-${p.id}">
       <div class="row-total ${rowTotal>0?'active':''}" id="rowtotal-${p.id}">
         ${rowTotal>0 ? '₹'+fmt(rowTotal) : '—'}
       </div>
@@ -681,9 +693,7 @@ function renderOrderPreview() {
         <thead><tr><th>Product</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Amt</th></tr></thead>
         <tbody>${items.map(it => {
           const p = getProduct(it.productId);
-          const qtyDisplay = it.inputUnit === 'pack'
-            ? `${it.inputQty}×${it.crateQtyAtTime||1}`
-            : `${it.piecesQty}pc`;
+          const qtyDisplay = it.inputUnit === 'pack' ? `${it.inputQty}×${it.crateQtyAtTime||1}` : `${it.piecesQty}pc`;
           return `<tr>
             <td style="font-size:12px;">${p ? p.name : it.productId}</td>
             <td class="right mono" style="font-size:11px;">${qtyDisplay}</td>
@@ -694,8 +704,12 @@ function renderOrderPreview() {
       </table>
     </div>`;
   summaryEl.style.display = 'block';
+  const slotLabel = orderType === 'special'
+    ? (specialSlot === 'evening' ? '🌆 Evening Special' : '🌅 Morning Special')
+    : (orderType === 'morning' ? '🌅 Morning' : '🌆 Evening');
   summaryEl.innerHTML = `
     <div class="summary-row"><span>Items</span><span>${items.length}</span></div>
+    <div class="summary-row"><span>Slot</span><span>${slotLabel}</span></div>
     <div class="summary-row"><span>Supplier</span><span style="font-weight:700;color:${sup?sup.color:'inherit'};">${sup?sup.name:'—'}</span></div>
     <div class="summary-row total"><span>Order Total</span><span>₹${fmt(total)}</span></div>`;
 }
@@ -706,7 +720,8 @@ function submitOrder() {
   const items = getOrderItemsList();
   if (items.length === 0) { toast('Please enter at least one product quantity', 'error'); return; }
   const note = document.getElementById('orderNote').value.trim();
-  const order = { id: uid(), date, type: orderType, supplier: orderSupplier, items, note, createdAt: new Date().toISOString() };
+  const slotVal = orderType === 'special' ? specialSlot : null;
+  const order = { id: uid(), date, type: orderType, supplier: orderSupplier, items, note, specialSlot: slotVal, createdAt: new Date().toISOString() };
   DB.orders.push(order);
   persistDB();
   const sup = getSupplier(orderSupplier);
@@ -725,22 +740,24 @@ function clearOrderForm() {
 function renderTodaysOrders() {
   const date = document.getElementById('orderDate').value || todayStr();
   const orders = DB.orders.filter(o => o.date === date).sort((a,b) => {
-    const tOrder = { morning:0, evening:1, special:2 };
-    return (tOrder[a.type]||0) - (tOrder[b.type]||0);
+    const key = { morning:0, evening:1, special:2 };
+    const aKey = a.type === 'special' ? (a.specialSlot === 'evening' ? 2.5 : 1.5) : (key[a.type]||0);
+    const bKey = b.type === 'special' ? (b.specialSlot === 'evening' ? 2.5 : 1.5) : (key[b.type]||0);
+    return aKey - bKey;
   });
   const el = document.getElementById('todaysOrders');
   if (orders.length === 0) {
     el.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:14px;">No orders for this date.</div>'; return;
   }
-  // Mobile-friendly order cards
   el.innerHTML = orders.map(o => {
     const total = calcOrderTotal(o);
-    const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':'⭐';
+    const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':(o.specialSlot==='evening'?'🌆⭐':'🌅⭐');
+    const typeLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
     const sup = getSupplier(o.supplier);
     return `<div class="order-card">
       <div class="order-card-header">
         <div>
-          <div class="order-card-title">${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)}${sup?' – '+sup.name:''}</div>
+          <div class="order-card-title">${icon} ${typeLabel}${sup?' – '+sup.name:''}</div>
           <div class="order-card-sub">${o.items.length} item(s)${o.note?' · '+o.note:''}</div>
         </div>
         <div class="order-card-total">₹${fmt(total)}</div>
@@ -757,10 +774,11 @@ function renderTodaysOrders() {
 function showOrderDetail(orderId) {
   const o = DB.orders.find(x => x.id === orderId);
   if (!o) return;
-  const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':'⭐';
+  const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':(o.specialSlot==='evening'?'🌆⭐':'🌅⭐');
+  const typeLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
   const total = calcOrderTotal(o);
   const sup = getSupplier(o.supplier);
-  document.getElementById('orderDetailTitle').textContent = `${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} – ${fmtDate(o.date)}`;
+  document.getElementById('orderDetailTitle').textContent = `${icon} ${typeLabel} – ${fmtDate(o.date)}`;
   document.getElementById('orderDetailContent').innerHTML = `
     ${sup?`<div style="margin-bottom:10px;font-size:12px;">Supplier: ${supplierBadge(o.supplier)}</div>`:''}
     ${o.note?`<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Note: ${o.note}</div>`:''}
@@ -794,15 +812,11 @@ function showOrderDetail(orderId) {
 function toggleWhatsappMsg(orderId) {
   const area = document.getElementById('whatsappCopyArea');
   const btn = document.getElementById('orderDetailWhatsappBtn');
-  if (area.style.display !== 'none') {
-    area.style.display = 'none';
-    btn.textContent = 'Share via WhatsApp';
-    return;
-  }
+  if (area.style.display !== 'none') { area.style.display = 'none'; btn.textContent = '📲 WhatsApp'; return; }
   const o = DB.orders.find(x => x.id === orderId);
   if (!o) return;
   const sup = getSupplier(o.supplier);
-  const slotLabel = o.type === 'morning' ? 'Morning' : o.type === 'evening' ? 'Evening' : 'Special';
+  const slotLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
   const total = calcOrderTotal(o);
   const pad = (str, len) => String(str).padEnd(len, ' ');
   const rpad = (str, len) => String(str).padStart(len, ' ');
@@ -810,29 +824,20 @@ function toggleWhatsappMsg(orderId) {
     const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
     const name = p.name.length > 20 ? p.name.substring(0, 19) + '.' : p.name;
     let qtyStr;
-    if (it.inputUnit === 'pack' || it.inputUnit === 'crate') {
-      qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`;
-    } else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) {
-      const packs = it.piecesQty / it.crateQtyAtTime;
-      const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,'');
-      qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`;
-    } else { qtyStr = `${it.piecesQty}pcs`; }
+    if (it.inputUnit === 'pack' || it.inputUnit === 'crate') { qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`; }
+    else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) { const packs = it.piecesQty / it.crateQtyAtTime; const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,''); qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`; }
+    else { qtyStr = `${it.piecesQty}pcs`; }
     const rate = `Rs.${it.priceAtTime.toFixed(2)}/pc`;
     const amt = `Rs.${fmt(it.amount)}`;
     return `  ${pad(name, 22)} ${pad(qtyStr, 20)} ${rpad(rate, 12)} ${rpad(amt, 10)}`;
   }).join('\n');
   const divider = '-'.repeat(68);
-  const lines = [
-    `Raj Mart`, `Order Details`, divider,
-    `Date     : ${fmtDateLong(o.date)}`, `Slot     : ${slotLabel}`,
+  const lines = [`Raj Mart`, `Order Details`, divider, `Date     : ${fmtDateLong(o.date)}`, `Slot     : ${slotLabel}`,
     sup ? `Supplier : ${sup.name}` : '', o.note ? `Note     : ${o.note}` : '',
     divider, `  ${'Product'.padEnd(22)} ${'Quantity'.padEnd(20)} ${'Rate'.padStart(12)} ${'Amount'.padStart(10)}`,
-    divider, itemLines, divider,
-    `${'TOTAL'.padEnd(57)} ${rpad('Rs.'+fmt(total), 10)}`, divider, ``,
-    `Please confirm receipt of this order.`, `Thank you.`
-  ].filter(l => l !== null && l !== undefined);
-  const msg = lines.filter((l, i) => l !== '' || i === lines.length - 3).join('\n');
-  document.getElementById('whatsappMsgBox').value = msg;
+    divider, itemLines, divider, `${'TOTAL'.padEnd(57)} ${rpad('Rs.'+fmt(total), 10)}`, divider, ``,
+    `Please confirm receipt of this order.`, `Thank you.`].filter(l => l !== null && l !== undefined);
+  document.getElementById('whatsappMsgBox').value = lines.filter((l, i) => l !== '' || i === lines.length - 3).join('\n');
   area.style.display = 'block';
   btn.textContent = 'Hide Message';
 }
@@ -842,9 +847,7 @@ function copyWhatsappMsg() {
   if (!box) return;
   box.select(); box.setSelectionRange(0, 99999);
   try {
-    navigator.clipboard.writeText(box.value).then(() => {
-      toast('Message copied! Paste it in WhatsApp.', 'success');
-    }).catch(() => { document.execCommand('copy'); toast('Message copied!', 'success'); });
+    navigator.clipboard.writeText(box.value).then(() => { toast('Message copied! Paste it in WhatsApp.', 'success'); }).catch(() => { document.execCommand('copy'); toast('Message copied!', 'success'); });
   } catch(e) { document.execCommand('copy'); toast('Message copied!', 'success'); }
 }
 
@@ -852,8 +855,8 @@ function sendLedgerWhatsapp(orderId) {
   const o = DB.orders.find(x => x.id === orderId);
   if (!o) return;
   const sup = getSupplier(o.supplier);
-  const slotIcon = o.type === 'morning' ? '🌅' : o.type === 'evening' ? '🌆' : '⭐';
-  const slotLabel = o.type === 'morning' ? 'Morning' : o.type === 'evening' ? 'Evening' : 'Special';
+  const slotIcon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':(o.specialSlot==='evening'?'🌆⭐':'🌅⭐');
+  const slotLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
   const total = calcOrderTotal(o);
   const C = { name: 18, qty: 18, rate: 13 };
   const pad  = (s, n) => String(s).padEnd(n, ' ');
@@ -863,25 +866,17 @@ function sendLedgerWhatsapp(orderId) {
     const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
     const name = p.name.length > C.name ? p.name.substring(0, C.name-1)+'.' : p.name;
     let qtyStr;
-    if (it.inputUnit === 'pack' || it.inputUnit === 'crate') {
-      qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`;
-    } else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) {
-      const packs = it.piecesQty / it.crateQtyAtTime;
-      const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,'');
-      qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`;
-    } else { qtyStr = `${it.piecesQty}pcs`; }
-    const rate = `Rs.${it.priceAtTime.toFixed(2)}/pc`;
-    const amt  = `Rs.${fmt(it.amount)}`;
-    return `${pad(name, C.name)} ${pad(qtyStr, C.qty)} ${pad(rate, C.rate)} ${amt}`;
+    if (it.inputUnit === 'pack' || it.inputUnit === 'crate') { qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`; }
+    else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) { const packs = it.piecesQty / it.crateQtyAtTime; const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,''); qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`; }
+    else { qtyStr = `${it.piecesQty}pcs`; }
+    return `${pad(name, C.name)} ${pad(qtyStr, C.qty)} ${pad(`Rs.${it.priceAtTime.toFixed(2)}/pc`, C.rate)} Rs.${fmt(it.amount)}`;
   }).join('\n');
   const headerRow  = `${pad('Product', C.name)} ${pad('Qty', C.qty)} ${pad('Rate', C.rate)} Amount`;
   const totalLabel = pad('TOTAL', C.name+1+C.qty+1+C.rate+1);
   const table = '```\n' + [headerRow, divider, itemLines, divider, `${totalLabel}Rs.${fmt(total)}`].join('\n') + '\n```';
   const infoLine = [fmtDateLong(o.date), `${slotIcon} ${slotLabel}`, sup?sup.name:''].filter(Boolean).join('  |  ');
   const msg = [`*Raj Mart – Order Details*`, ``, infoLine, o.note?`📝 ${o.note}`:null, ``, table, `*Total: Rs.${fmt(total)}*`, ``].filter(l=>l!==null).join('\n');
-  navigator.clipboard.writeText(msg).then(() => {
-    toast('📋 Copied! Paste in WhatsApp.', 'success');
-  }).catch(() => {
+  navigator.clipboard.writeText(msg).then(() => { toast('📋 Copied! Paste in WhatsApp.', 'success'); }).catch(() => {
     const ta = document.createElement('textarea');
     ta.value = msg; ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, 99999);
@@ -895,7 +890,6 @@ function confirmDeleteOrder(orderId) {
   document.getElementById('deleteConfirmMsg').textContent = 'Delete this order? This cannot be undone.';
   openModal('deleteConfirmModal');
 }
-
 function confirmDeletePayment(paymentId) {
   pendingDelete = { type: 'payment', id: paymentId };
   document.getElementById('deleteConfirmMsg').textContent = 'Delete this payment record? This cannot be undone.';
@@ -911,11 +905,14 @@ function openEditOrder(orderId) {
   editingOrderId = orderId;
   editOrderType = o.type;
   editOrderSupplier = o.supplier || 'ajay';
+  editSpecialSlot = o.specialSlot || 'morning';
   editOrderItems = {};
   o.items.forEach(it => { editOrderItems[it.productId] = { qty: String(it.inputQty), unit: it.inputUnit }; });
   document.getElementById('editOrderDate').value = o.date;
   document.getElementById('editOrderNote').value = o.note || '';
   setEditOrderType(o.type);
+  // Restore special slot if applicable
+  if (o.type === 'special') { setTimeout(() => setEditSpecialSlot(o.specialSlot || 'morning'), 50); }
   openModal('editOrderModal');
 }
 
@@ -927,6 +924,8 @@ function setEditOrderType(type) {
   });
   const titles = { morning:'Products – Morning', evening:'Products – Evening', special:'Products – Special' };
   document.getElementById('editProductSectionTitle').textContent = titles[type];
+  const wrap = document.getElementById('editSpecialSlotWrap');
+  if (wrap) wrap.style.display = type === 'special' ? 'block' : 'none';
   renderEditSupplierSelector();
   renderEditProductList();
   renderEditOrderPreview();
@@ -988,10 +987,8 @@ function editProductRowHTML(p, isSpecialCategory) {
              <button class="${item.unit==='pack'?'active':''}" onclick="setEditUnit('${p.id}','pack')" ${!p.crateQty?'disabled':''}>${packName}</button>`
         }
       </div>
-      <input class="qty-input" type="number" min="0" step="1"
-        placeholder="Qty" value="${item.qty}"
-        oninput="updateEditQty('${p.id}', this.value)"
-        id="editqty-${p.id}">
+      <input class="qty-input" type="number" min="0" step="1" placeholder="Qty" value="${item.qty}"
+        oninput="updateEditQty('${p.id}', this.value)" id="editqty-${p.id}">
       <div class="row-total ${rowTotal>0?'active':''}" id="editrowtotal-${p.id}">
         ${rowTotal>0 ? '₹'+fmt(rowTotal) : '—'}
       </div>
@@ -1071,7 +1068,8 @@ function saveEditedOrder() {
   const note = document.getElementById('editOrderNote').value.trim();
   const idx = DB.orders.findIndex(o => o.id === editingOrderId);
   if (idx === -1) { toast('Order not found', 'error'); return; }
-  DB.orders[idx] = { ...DB.orders[idx], date, type: editOrderType, supplier: editOrderSupplier, items, note };
+  const slotVal = editOrderType === 'special' ? editSpecialSlot : null;
+  DB.orders[idx] = { ...DB.orders[idx], date, type: editOrderType, supplier: editOrderSupplier, items, note, specialSlot: slotVal };
   persistDB();
   toast('✅ Order updated!', 'success');
   closeModal('editOrderModal');
@@ -1142,26 +1140,37 @@ function getLedgerDateRange() {
 
 function buildAllLedgerRows(supplierId) {
   const rows = [];
-  const orders = supplierId && supplierId !== 'all' ? DB.orders.filter(o => o.supplier === supplierId) : DB.orders;
+  const orders   = supplierId && supplierId !== 'all' ? DB.orders.filter(o => o.supplier === supplierId)   : DB.orders;
   const payments = supplierId && supplierId !== 'all' ? DB.payments.filter(p => p.supplier === supplierId) : DB.payments;
+
   orders.forEach(o => {
     const total = calcOrderTotal(o);
     const sup = getSupplier(o.supplier);
-    rows.push({ id: o.id, date: o.date, type: o.type, debit: total, credit: 0, amount: total, items: o.items, note: o.note, supplier: o.supplier,
-      description: (sup ? sup.name + ' – ' : '') + (o.type === 'morning' ? 'Morning Bill' : o.type === 'evening' ? 'Evening Bill' : 'Special Order') });
+    const slotLabel = o.type === 'morning' ? 'Morning Bill' : o.type === 'evening' ? 'Evening Bill'
+      : (o.specialSlot === 'evening' ? 'Evening Special' : 'Morning Special');
+    rows.push({
+      id: o.id, date: o.date, type: o.type, specialSlot: o.specialSlot || 'morning',
+      timeSlot: null,
+      debit: total, credit: 0, amount: total, items: o.items, note: o.note, supplier: o.supplier,
+      description: (sup ? sup.name + ' – ' : '') + slotLabel
+    });
   });
+
   payments.forEach(p => {
     const sup = getSupplier(p.supplier);
-    rows.push({ id: p.id, date: p.date, type: 'payment', debit: 0, credit: p.amount, amount: p.amount, supplier: p.supplier,
-      description: (sup ? sup.name + ' – ' : '') + (p.note || 'Payment') });
+    rows.push({
+      id: p.id, date: p.date, type: 'payment', timeSlot: p.timeSlot || 'morning', specialSlot: null,
+      debit: 0, credit: p.amount, amount: p.amount, supplier: p.supplier,
+      description: (sup ? sup.name + ' – ' : '') + (p.note || 'Payment')
+    });
   });
-  const typeOrder = { morning:0, evening:1, special:2, payment:3 };
-  rows.sort((a, b) => a.date.localeCompare(b.date) || (typeOrder[a.type]??2) - (typeOrder[b.type]??2));
+
+  // TIME-AWARE SORT: by date first, then by slot position within the day
+  rows.sort((a, b) => a.date.localeCompare(b.date) || rowSortKey(a) - rowSortKey(b));
   return rows;
 }
 
 function renderLedger() {
-  // Supplier tabs
   const tabContainer = document.getElementById('ledgerSupplierTabs');
   if (tabContainer) {
     tabContainer.innerHTML = `
@@ -1193,7 +1202,8 @@ function renderLedger() {
       const isPay = r.type === 'payment';
       const detailId = 'det-' + r.id;
       const sup = getSupplier(r.supplier);
-      // Mobile-friendly ledger: collapsible detail rows
+      const icon = rowIcon(r);
+
       let detailHTML = '';
       if (!isPay && r.items) {
         detailHTML = `
@@ -1207,23 +1217,21 @@ function renderLedger() {
             ${r.items.map(it => {
               const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
               let qtyDisplay;
-              if (it.inputUnit === 'pack' || it.inputUnit === 'crate') {
-                qtyDisplay = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`;
-              } else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) {
-                const packs = (it.piecesQty / it.crateQtyAtTime);
-                const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,'');
-                qtyDisplay = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'crate'})`;
-              } else { qtyDisplay = `${it.piecesQty}pcs`; }
+              if (it.inputUnit === 'pack' || it.inputUnit === 'crate') { qtyDisplay = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`; }
+              else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) { const packs = (it.piecesQty / it.crateQtyAtTime); const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,''); qtyDisplay = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'crate'})`; }
+              else { qtyDisplay = `${it.piecesQty}pcs`; }
               return `<div class="detail-row"><span>${p.name} × ${qtyDisplay}</span><span>₹${fmt(it.amount)}</span></div>`;
             }).join('')}
           </div>`;
       }
-      // Mobile-friendly ledger row — show key info, hide less-important columns on mobile
+
       return `<tr class="${isPay?'payment-row':''}">
-        <td class="date-cell">${fmtDate(r.date)}<br><span class="type-badge badge-${r.type}" style="margin-top:2px;display:inline-block;">${r.type==='morning'?'🌅':r.type==='evening'?'🌆':r.type==='special'?'⭐':'💳'}</span></td>
+        <td class="date-cell">${fmtDate(r.date)}<br>
+          <span style="font-size:13px;">${icon}</span>
+        </td>
         <td class="ledger-desc-cell">
           <div style="font-size:12px;font-weight:600;">${sup?`<span style="color:${sup.color};">${sup.name}</span>`:'—'}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${r.note&&!isPay?r.note:''}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${r.description.split(' – ').pop()}${r.note&&!isPay&&r.note?' · '+r.note:''}</div>
         </td>
         <td class="right mono ledger-debit">${r.debit>0?'₹'+fmt(r.debit):'—'}</td>
         <td class="right mono credit-cell">${r.credit>0?'₹'+fmt(r.credit):'—'}</td>
@@ -1271,6 +1279,7 @@ function openEditPayment(paymentId) {
   document.getElementById('payModalAmount').value = p.amount;
   document.getElementById('payModalNote').value = p.note || '';
   populateSupplierSelect('payModalSupplier', p.supplier || '');
+  setPayModalSlot(p.timeSlot || 'morning');
   openModal('paymentModal');
 }
 
@@ -1282,23 +1291,25 @@ function openPaymentFromLedger() {
   document.getElementById('payModalAmount').value = '';
   document.getElementById('payModalNote').value = '';
   populateSupplierSelect('payModalSupplier', currentLedgerSupplier !== 'all' ? currentLedgerSupplier : '');
+  setPayModalSlot('morning');
   openModal('paymentModal');
 }
 
 function recordPaymentFromModal() {
-  const date = document.getElementById('payModalDate').value;
-  const amount = parseFloat(document.getElementById('payModalAmount').value);
-  const note = document.getElementById('payModalNote').value.trim();
+  const date     = document.getElementById('payModalDate').value;
+  const amount   = parseFloat(document.getElementById('payModalAmount').value);
+  const note     = document.getElementById('payModalNote').value.trim();
   const supplier = document.getElementById('payModalSupplier').value;
+  const timeSlot = document.getElementById('payModalSlot').value || 'morning';
   if (!date || isNaN(amount) || amount <= 0) { toast('Enter valid date and amount', 'error'); return; }
   if (!supplier) { toast('Please select a supplier', 'error'); return; }
   if (editingPaymentId) {
     const idx = DB.payments.findIndex(p => p.id === editingPaymentId);
     if (idx === -1) { toast('Payment not found', 'error'); return; }
-    DB.payments[idx] = { ...DB.payments[idx], date, amount, note, supplier };
+    DB.payments[idx] = { ...DB.payments[idx], date, amount, note, supplier, timeSlot };
     persistDB(); toast('✅ Payment updated!', 'success'); editingPaymentId = null;
   } else {
-    DB.payments.push({ id: uid(), date, amount, note, supplier, createdAt: new Date().toISOString() });
+    DB.payments.push({ id: uid(), date, amount, note, supplier, timeSlot, createdAt: new Date().toISOString() });
     persistDB();
     const sup = getSupplier(supplier);
     toast(`✅ Payment for ${sup?sup.name:'supplier'}!`, 'success');
@@ -1330,8 +1341,9 @@ function renderPaymentsPage() {
   }
   tbody.innerHTML = payments.map(p => {
     const sup = getSupplier(p.supplier);
+    const slotIcon = p.timeSlot === 'evening' ? '🌆' : '🌅';
     return `<tr>
-      <td>${fmtDate(p.date)}</td>
+      <td>${fmtDate(p.date)} <span style="font-size:12px;">${slotIcon}</span></td>
       <td>${sup?`<span style="font-size:11px;font-weight:700;color:${sup.color};">👤 ${sup.name}</span>`:'<span style="color:var(--text-muted);">—</span>'}</td>
       <td style="color:var(--text-muted);font-size:12px;">${p.note || '—'}</td>
       <td class="right mono" style="font-weight:700;color:var(--green);">₹${fmt(p.amount)}</td>
@@ -1344,13 +1356,14 @@ function renderPaymentsPage() {
 }
 
 function recordPayment() {
-  const date = document.getElementById('payDate').value;
-  const amount = parseFloat(document.getElementById('payAmount').value);
-  const note = document.getElementById('payNote').value.trim();
+  const date     = document.getElementById('payDate').value;
+  const amount   = parseFloat(document.getElementById('payAmount').value);
+  const note     = document.getElementById('payNote').value.trim();
   const supplier = document.getElementById('paySupplier').value;
+  const timeSlot = document.getElementById('paySlot').value || 'morning';
   if (!date || isNaN(amount) || amount <= 0) { toast('Enter valid date and amount', 'error'); return; }
   if (!supplier) { toast('Please select a supplier', 'error'); return; }
-  DB.payments.push({ id: uid(), date, amount, note, supplier, createdAt: new Date().toISOString() });
+  DB.payments.push({ id: uid(), date, amount, note, supplier, timeSlot, createdAt: new Date().toISOString() });
   persistDB();
   document.getElementById('payAmount').value = '';
   document.getElementById('payNote').value = '';
@@ -1490,7 +1503,6 @@ function renderAnalytics() {
     <div class="stat-card"><div class="stat-icon blue">📅</div>
       <div><div class="stat-label">This Month</div><div class="stat-value blue">₹${fmt(monthTotal)}</div><div class="stat-sub">${monthOrders.length} orders</div></div></div>`;
 
-  // Supplier breakdown
   document.getElementById('analyticsSupplierBreakdown').innerHTML = SUPPLIERS.map(sup => {
     const supOrders = DB.orders.filter(o => o.supplier === sup.id).reduce((s,o) => s+calcOrderTotal(o), 0);
     const supPaid = DB.payments.filter(p => p.supplier === sup.id).reduce((s,p) => s+p.amount, 0);
@@ -1507,7 +1519,6 @@ function renderAnalytics() {
     </div>`;
   }).join('');
 
-  // Monthly chart
   const months = [];
   for (let i = 5; i >= 0; i--) {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
@@ -1527,7 +1538,6 @@ function renderAnalytics() {
         </div>`).join('')}
     </div>`;
 
-  // Top products
   const prodTotals = {};
   DB.orders.forEach(o => o.items.forEach(it => { prodTotals[it.productId] = (prodTotals[it.productId] || 0) + it.amount; }));
   const sorted = Object.entries(prodTotals).sort((a,b) => b[1]-a[1]).slice(0, 6);
@@ -1549,7 +1559,6 @@ function renderAnalytics() {
         </div>`;
       }).join('');
 
-  // Daily this month
   const today2 = new Date();
   const daysInMonth = new Date(today2.getFullYear(), today2.getMonth()+1, 0).getDate();
   const dailyData = [];
@@ -1568,13 +1577,12 @@ function renderAnalytics() {
         </div>`).join('')}
     </div>`;
 
-  // Slot breakdown
   const morning = DB.orders.filter(o=>o.type==='morning').reduce((s,o)=>s+calcOrderTotal(o),0);
   const evening = DB.orders.filter(o=>o.type==='evening').reduce((s,o)=>s+calcOrderTotal(o),0);
   const special = DB.orders.filter(o=>o.type==='special').reduce((s,o)=>s+calcOrderTotal(o),0);
   const slotTotal = morning + evening + special || 1;
-  document.getElementById('slotBreakdown').innerHTML = `
-    ${[['🌅 Morning', morning, '#b7950b', '#fff8e1'], ['🌆 Evening', evening, 'var(--blue)', 'var(--blue-bg)'], ['⭐ Special', special, 'var(--red)', 'var(--red-bg)']].map(([label,val,color,bg]) => `
+  document.getElementById('slotBreakdown').innerHTML =
+    [['🌅 Morning', morning, '#b7950b', '#fff8e1'], ['🌆 Evening', evening, 'var(--blue)', 'var(--blue-bg)'], ['⭐ Special', special, 'var(--red)', 'var(--red-bg)']].map(([label,val,color,bg]) => `
     <div style="margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
         <span style="font-weight:700;">${label}</span>
@@ -1583,9 +1591,8 @@ function renderAnalytics() {
       <div style="background:var(--light-gray);border-radius:4px;height:9px;overflow:hidden;">
         <div style="background:${color};height:100%;width:${Math.round(val/slotTotal*100)}%;border-radius:4px;"></div>
       </div>
-    </div>`).join('')}`;
+    </div>`).join('');
 
-  // Payment trend
   const last6 = [];
   for (let i = 5; i >= 0; i--) {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
@@ -1659,7 +1666,7 @@ function exportYearlyPDF() {
 }
 
 function printDayReport(date) {
-  const orders = DB.orders.filter(o => o.date === date).sort((a,b) => { const t={morning:0,evening:1,special:2}; return (t[a.type]||0)-(t[b.type]||0); });
+  const orders = DB.orders.filter(o => o.date === date).sort((a,b) => rowSortKey({type:a.type,specialSlot:a.specialSlot,timeSlot:null}) - rowSortKey({type:b.type,specialSlot:b.specialSlot,timeSlot:null}));
   const payments = DB.payments.filter(p => p.date === date);
   const totalOrders = orders.reduce((s, o) => s + calcOrderTotal(o), 0);
   const totalPay = payments.reduce((s, p) => s + p.amount, 0);
@@ -1668,9 +1675,10 @@ function printDayReport(date) {
     html += '<p style="text-align:center;color:#666;padding:20px;">No orders on this date.</p>';
   } else {
     orders.forEach(o => {
-      const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':'⭐';
+      const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':(o.specialSlot==='evening'?'🌆⭐':'🌅⭐');
+      const typeLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
       const sup = getSupplier(o.supplier);
-      html += `<h3>${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} Order${sup?' – '+sup.name:''}</h3>
+      html += `<h3>${icon} ${typeLabel} Order${sup?' – '+sup.name:''}</h3>
         <table class="print-table"><thead><tr><th>Product</th><th class="right">Pcs</th><th class="right">Crates</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
         <tbody>${o.items.map(it => {
           const p = DB.products.find(x=>x.id===it.productId)||{name:it.productId};
@@ -1692,10 +1700,11 @@ function printDayReport(date) {
 function printSingleOrder(orderId) {
   const o = DB.orders.find(x => x.id === orderId);
   if (!o) return;
-  const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':'⭐';
+  const icon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':(o.specialSlot==='evening'?'🌆⭐':'🌅⭐');
+  const typeLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
   const total = calcOrderTotal(o);
   const sup = getSupplier(o.supplier);
-  const html = `<div class="print-header"><h1>Raj Mart</h1><p style="font-weight:700;">${icon} ${o.type.charAt(0).toUpperCase()+o.type.slice(1)} Order – ${fmtDateLong(o.date)}</p>${sup?`<p>Supplier: ${sup.name}</p>`:''}</div>
+  const html = `<div class="print-header"><h1>Raj Mart</h1><p style="font-weight:700;">${icon} ${typeLabel} Order – ${fmtDateLong(o.date)}</p>${sup?`<p>Supplier: ${sup.name}</p>`:''}</div>
     <table class="print-table"><thead><tr><th>Product</th><th class="right">Pcs</th><th class="right">Crates</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
     <tbody>${o.items.map(it=>{const p=DB.products.find(x=>x.id===it.productId)||{name:it.productId};const crates=it.crateQtyAtTime?(it.piecesQty/it.crateQtyAtTime).toFixed(2).replace(/\.?0+$/,''):'—';return`<tr><td>${p.name}</td><td class="right">${it.piecesQty}</td><td class="right">${crates}</td><td class="right">₹${it.priceAtTime.toFixed(3).replace(/\.?0+$/,'')}</td><td class="right">₹${fmt(it.amount)}</td></tr>`;}).join('')}</tbody>
     <tfoot><tr><td colspan="4" style="text-align:right;font-weight:700;padding:7px 8px;border-top:2px solid #ddd;">TOTAL</td><td class="right" style="font-weight:700;font-size:14px;border-top:2px solid #ddd;">₹${fmt(total)}</td></tr></tfoot>
@@ -1716,8 +1725,8 @@ function printLedgerPeriod(title, from, to, supplierId) {
   const html = `
     <div class="print-header"><h1>Raj Mart</h1><p style="font-size:14px;font-weight:700;">${title}</p><p>Printed: ${new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'})}</p>${openingBal?`<p>Opening: ₹${fmt(openingBal)}</p>`:''}</div>
     <table class="print-table">
-      <thead><tr><th>Date</th><th>Type</th><th>Supplier</th><th>Description</th><th class="right">Debit</th><th class="right">Credit</th><th class="right">Balance</th></tr></thead>
-      <tbody>${rowsWithBal.map(r=>{const sup=getSupplier(r.supplier);return`<tr class="${r.type==='payment'?'payment-row':''}"><td>${fmtDate(r.date)}</td><td>${r.type==='payment'?'PAY':r.type==='special'?'Spl':'Reg'}</td><td>${sup?sup.name:'—'}</td><td>${r.description}</td><td class="right">${r.debit>0?'₹'+fmt(r.debit):'—'}</td><td class="right">${r.credit>0?'₹'+fmt(r.credit):'—'}</td><td class="right balance-cell">₹${fmt(r.balance)}</td></tr>`;}).join('')}</tbody>
+      <thead><tr><th>Date</th><th>Slot</th><th>Supplier</th><th>Description</th><th class="right">Debit</th><th class="right">Credit</th><th class="right">Balance</th></tr></thead>
+      <tbody>${rowsWithBal.map(r=>{const sup=getSupplier(r.supplier);const icon=rowIcon(r);return`<tr class="${r.type==='payment'?'payment-row':''}"><td>${fmtDate(r.date)}</td><td>${icon}</td><td>${sup?sup.name:'—'}</td><td>${r.description}</td><td class="right">${r.debit>0?'₹'+fmt(r.debit):'—'}</td><td class="right">${r.credit>0?'₹'+fmt(r.credit):'—'}</td><td class="right balance-cell">₹${fmt(r.balance)}</td></tr>`;}).join('')}</tbody>
       <tfoot><tr style="font-weight:700;background:#f8f8f8;"><td colspan="4" style="text-align:right;padding:8px;">TOTALS</td><td class="right" style="color:#c0392b;">₹${fmt(totalDebit)}</td><td class="right" style="color:#1e8449;">₹${fmt(totalCredit)}</td><td class="right balance-cell">₹${fmt(rowsWithBal.length?rowsWithBal[rowsWithBal.length-1].balance:0)}</td></tr></tfoot>
     </table>
     <div class="print-summary">
@@ -1766,12 +1775,9 @@ function openPrintWindow(content) {
 //  MODAL CLOSE ON OVERLAY CLICK
 // ==========================================================
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', function(e) {
-    if (e.target === this) this.classList.remove('open');
-  });
+  overlay.addEventListener('click', function(e) { if (e.target === this) this.classList.remove('open'); });
 });
 
-// Edit price form listeners
 document.getElementById('editPriceVal').addEventListener('input', updateEditPreview);
 document.getElementById('editEveningPriceVal').addEventListener('input', updateEditPreview);
 document.getElementById('editCrateQty').addEventListener('input', updateEditPreview);

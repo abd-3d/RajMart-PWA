@@ -582,6 +582,10 @@ function showPage(page) {
   activePage = page;
   const mobileMenu = document.getElementById('mobileMenu');
   if (mobileMenu) mobileMenu.classList.remove('open');
+  const mobileMenuOverlay = document.getElementById('mobileMenuOverlay');
+  if (mobileMenuOverlay) mobileMenuOverlay.classList.remove('open');
+  const hamburgerBtn = document.getElementById('hamburgerBtn');
+  if (hamburgerBtn) hamburgerBtn.classList.remove('open');
   if (page === 'dashboard') renderDashboard();
   else if (page === 'order') initOrderPage();
   else if (page === 'ledger') renderLedger();

@@ -222,8 +222,11 @@
                         <div id="ledgerSupplierTabs" class="supplier-tabs-row"></div>
 
                         <!-- Date filter -->
+                        <!-- REPLACE with: -->
                         <div class="ledger-filter">
                             <button class="filter-btn active" onclick="setLedgerFilter('all',this)">All</button>
+                            <button class="filter-btn" onclick="setLedgerFilter('this-week',this)">This Week</button>
+                            <button class="filter-btn" onclick="setLedgerFilter('last-week',this)">Last Week</button>
                             <button class="filter-btn" onclick="setLedgerFilter('this-month',this)">This Month</button>
                             <button class="filter-btn" onclick="setLedgerFilter('last-month',this)">Last Month</button>
                             <button class="filter-btn" onclick="setLedgerFilter('custom',this)">Custom</button>

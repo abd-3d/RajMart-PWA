@@ -1386,19 +1386,41 @@ function setLedgerSupplier(supplierId) {
   renderLedger();
 }
 
+// REPLACE with:
 function getLedgerDateRange() {
   const today = todayStr();
-  if (currentLedgerFilter === 'this-month') {
+
+  if (currentLedgerFilter === 'this-week') {
+    const d = new Date();
+    // Monday = day 1; shift Sunday (0) to 7 so week starts on Monday
+    const dayOfWeek = d.getDay() || 7;
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - dayOfWeek + 1);
+    return { from: mon.toISOString().split('T')[0], to: today };
+
+  } else if (currentLedgerFilter === 'last-week') {
+    const d = new Date();
+    const dayOfWeek = d.getDay() || 7;
+    const lastMon = new Date(d);
+    lastMon.setDate(d.getDate() - dayOfWeek - 6);
+    const lastSun = new Date(lastMon);
+    lastSun.setDate(lastMon.getDate() + 6);
+    return { from: lastMon.toISOString().split('T')[0], to: lastSun.toISOString().split('T')[0] };
+
+  } else if (currentLedgerFilter === 'this-month') {
     const m = today.substr(0, 7);
     return { from: m + '-01', to: today };
+
   } else if (currentLedgerFilter === 'last-month') {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
     const m = d.toISOString().substr(0, 7);
     const lastDay = new Date(d.getFullYear(), d.getMonth()+1, 0).toISOString().split('T')[0];
     return { from: m + '-01', to: lastDay };
+
   } else if (currentLedgerFilter === 'custom') {
     return { from: document.getElementById('ledgerFrom').value || '2000-01-01', to: document.getElementById('ledgerTo').value || today };
   }
+
   return { from: '2000-01-01', to: '2099-12-31' };
 }
 

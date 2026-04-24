@@ -1,716 +1,753 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>RajMart – Amul Milk Manager</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>RajMart – Amul Milk Manager</title>
 
-<!-- ===== PWA ===== -->
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#c0392b">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="RajMart">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
+    <!-- ===== PWA ===== -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#c0392b">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RajMart">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
 
-<!-- ===== Fonts ===== -->
-<link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+    <!-- ===== Fonts ===== -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
 
-<!-- ===== Google APIs ===== -->
-<script src="https://accounts.google.com/gsi/client" async></script>
-<script src="https://apis.google.com/js/api.js" onload="onGapiLoad()" async></script>
+    <!-- ===== Google APIs ===== -->
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <script src="https://apis.google.com/js/api.js" onload="onGapiLoad()" async></script>
 
-<input type="file" id="jsonFileInput" accept=".json" style="display:none" onchange="handleFileLoad(this)">
+    <input type="file" id="jsonFileInput" accept=".json" style="display:none" onchange="handleFileLoad(this)">
 </head>
+
 <body>
 
-<!-- ===== CAPTURE PWA INSTALL PROMPT AS EARLY AS POSSIBLE ===== -->
-<script>
-  window._deferredInstallPrompt = null;
-  window.addEventListener('beforeinstallprompt', function(e) {
-    e.preventDefault();
-    window._deferredInstallPrompt = e;
-    // Try to show button if DOM already has it
-    var btn = document.getElementById('pwaInstallBtn');
-    if (btn) btn.style.display = 'inline-flex';
-  });
-  window.addEventListener('appinstalled', function() {
-    window._deferredInstallPrompt = null;
-    var btn = document.getElementById('pwaInstallBtn');
-    if (btn) btn.style.display = 'none';
-  });
-</script>
-
-<div id="mainApp">
-
-  <!-- ===== TOPBAR ===== -->
-  <div class="topbar">
-    <div class="topbar-left">
-      <button class="hamburger-btn" id="hamburgerBtn" onclick="toggleMobileMenu()" aria-label="Menu">
-        <span></span><span></span><span></span>
-      </button>
-      <div class="topbar-brand">Raj Mart</div>
-    </div>
-
-    <div class="topbar-right">
-      <span id="saveIndicator" class="save-indicator"></span>
-      <button id="driveTopBtn" onclick="driveSignIn()" title="Sync with Google Drive" class="topbar-icon-btn">☁️</button>
-      <button id="pwaInstallBtn" style="display:none;" class="topbar-icon-btn" onclick="pwaInstall()">📲 Install</button>
-    </div>
-  </div>
-
-  <!-- ===== MOBILE SLIDE-DOWN MENU ===== -->
-  <div class="mobile-menu" id="mobileMenu">
-    <div class="mobile-menu-inner">
-      <button class="mobile-nav-btn" id="mnav-dashboard"  onclick="showPage('dashboard')">🏠 Dashboard</button>
-      <button class="mobile-nav-btn" id="mnav-order"      onclick="showPage('order')">➕ New Order</button>
-      <button class="mobile-nav-btn" id="mnav-ledger"     onclick="showPage('ledger')">📒 Ledger</button>
-      <button class="mobile-nav-btn" id="mnav-payments"   onclick="showPage('payments')">💳 Payments</button>
-      <button class="mobile-nav-btn" id="mnav-products"   onclick="showPage('products')">📦 Products</button>
-      <button class="mobile-nav-btn" id="mnav-analytics"  onclick="showPage('analytics')">📊 Analytics</button>
-      <button class="mobile-nav-btn" id="mnav-export"     onclick="showPage('export')">📤 Export</button>
-      <div class="mobile-menu-actions">
-        <button class="btn btn-secondary btn-sm" onclick="triggerLoadFile()">📥 Import JSON</button>
-        <button class="btn btn-secondary btn-sm" onclick="saveDataFile()">📤 Backup JSON</button>
-      </div>
-    </div>
-  </div>
-  <!-- Overlay to close mobile menu -->
-  <div class="mobile-menu-overlay" id="mobileMenuOverlay" onclick="toggleMobileMenu()"></div>
-
-  <!-- ===== DESKTOP NAV (hidden on mobile) ===== -->
-  <div class="desktop-nav">
-    <button id="nav-dashboard" onclick="showPage('dashboard')">Dashboard</button>
-    <button id="nav-order"     onclick="showPage('order')">New Order</button>
-    <button id="nav-ledger"    onclick="showPage('ledger')">Ledger</button>
-    <button id="nav-payments"  onclick="showPage('payments')">Payments</button>
-    <button id="nav-products"  onclick="showPage('products')">Products</button>
-    <button id="nav-analytics" onclick="showPage('analytics')">Analytics</button>
-    <button id="nav-export"    onclick="showPage('export')">Export</button>
-    <div class="desktop-nav-actions">
-      <button onclick="triggerLoadFile()" class="topbar-icon-btn" title="Import JSON">📥</button>
-      <button onclick="saveDataFile()"    class="topbar-icon-btn" title="Backup JSON">📤</button>
-    </div>
-  </div>
-
-  <!-- ===== BOTTOM TAB BAR (mobile only) ===== -->
-  <nav class="bottom-tabs" id="bottomTabs">
-    <button class="tab-btn" id="tab-dashboard" onclick="showPage('dashboard')">
-      <span class="tab-icon">🏠</span><span class="tab-label">Home</span>
-    </button>
-    <button class="tab-btn" id="tab-order" onclick="showPage('order')">
-      <span class="tab-icon">➕</span><span class="tab-label">Order</span>
-    </button>
-    <button class="tab-btn" id="tab-ledger" onclick="showPage('ledger')">
-      <span class="tab-icon">📒</span><span class="tab-label">Ledger</span>
-    </button>
-    <button class="tab-btn" id="tab-payments" onclick="showPage('payments')">
-      <span class="tab-icon">💳</span><span class="tab-label">Pay</span>
-    </button>
-    <button class="tab-btn" id="tab-more" onclick="toggleMobileMenu()">
-      <span class="tab-icon">⋯</span><span class="tab-label">More</span>
-    </button>
-  </nav>
-
-  <div class="app-body" id="appBody">
-    <div class="main-content">
-
-      <!-- ===== DASHBOARD ===== -->
-      <div id="page-dashboard" class="page">
-        <div class="page-header">
-          <div>
-            <div class="page-title">RAJ MART</div>
-            <div class="page-subtitle" id="dashDate"></div>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="showPage('order')">+ Order</button>
-        </div>
-        <div class="stats-grid" id="dashStats"></div>
-        <div class="card">
-          <div class="card-title">Supplier Balances</div>
-          <div id="dashSupplierBalances"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Recent Orders</div>
-          <div id="dashRecentOrders"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Payment Status</div>
-          <div id="dashBalance"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">This Month</div>
-          <div id="dashMonthlySummary"></div>
-        </div>
-      </div>
-
-      <!-- ===== NEW ORDER ===== -->
-      <div id="page-order" class="page">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title" style="margin-bottom:0;">New Order</div>
-            <div class="page-subtitle" id="todayDate"></div>
-          </div>
-
-          <div class="form-row" style="margin-bottom:14px;">
-            <div class="form-group" style="max-width:160px;">
-              <label>Date</label>
-              <input type="date" id="orderDate" onchange="renderTodaysOrders()">
-            </div>
-            <div class="form-group">
-              <label>Slot</label>
-              <div class="delivery-toggle">
-                <button id="btn-morning" onclick="setOrderType('morning')">🌅</button>
-                <button id="btn-evening" onclick="setOrderType('evening')">🌆</button>
-                <button id="btn-special" onclick="setOrderType('special')">⭐</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="form-group" style="margin-bottom:14px;">
-            <label>Supplier</label>
-            <div id="orderSupplierWrap" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
-          </div>
-
-          <div class="section-title" id="productSectionTitle">Products – Morning</div>
-          <div class="product-grid" id="productList"></div>
-
-          <div class="form-group" style="margin-top:12px;">
-            <label>Note (optional)</label>
-            <input type="text" id="orderNote" placeholder="Add a note...">
-          </div>
-          <div id="orderPreview" style="margin-top:12px;"></div>
-          <div id="orderSummary" style="display:none;" class="order-summary"></div>
-          <div class="form-actions">
-            <button class="btn btn-primary btn-lg" onclick="submitOrder()">✅ Save Order</button>
-            <button class="btn btn-secondary" onclick="clearOrderForm()">✕ Clear</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Orders for Selected Date</div>
-          <div id="todaysOrders"></div>
-        </div>
-      </div>
-
-      <!-- ===== LEDGER ===== -->
-      <div id="page-ledger" class="page">
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title" style="margin-bottom:0;">Ledger</div>
-            <div style="display:flex;gap:6px;">
-              <button class="btn btn-success btn-sm" onclick="openPaymentFromLedger()">+ Pay</button>
-              <button class="btn btn-info btn-sm" onclick="printCurrentLedger()">🖨️</button>
-            </div>
-          </div>
-
-          <!-- Supplier tabs -->
-          <div id="ledgerSupplierTabs" class="supplier-tabs-row"></div>
-
-          <!-- Date filter -->
-          <div class="ledger-filter">
-            <button class="filter-btn active" onclick="setLedgerFilter('all',this)">All</button>
-            <button class="filter-btn" onclick="setLedgerFilter('this-month',this)">This Month</button>
-            <button class="filter-btn" onclick="setLedgerFilter('last-month',this)">Last Month</button>
-            <button class="filter-btn" onclick="setLedgerFilter('custom',this)">Custom</button>
-          </div>
-          <div id="customDateRange" style="display:none;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-            <input type="date" id="ledgerFrom" class="date-input-sm" onchange="renderLedger()">
-            <span style="font-size:12px;color:var(--text-muted);">to</span>
-            <input type="date" id="ledgerTo"   class="date-input-sm" onchange="renderLedger()">
-          </div>
-
-          <!-- Summary chips -->
-          <div id="ledgerSummaryBar" class="ledger-summary-bar"></div>
-
-          <!-- Table -->
-          <div class="table-scroll">
-            <table class="ledger-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Supplier</th>
-                  <th class="right">Debit</th>
-                  <th class="right">Credit</th>
-                  <th class="right">Balance</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="ledgerBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ===== PAYMENTS ===== -->
-      <div id="page-payments" class="page">
-        <div class="card">
-          <div class="card-title">Record Payment</div>
-          <div class="form-row">
-            <div class="form-group" style="max-width:150px;">
-              <label>Date</label>
-              <input type="date" id="payDate">
-            </div>
-            <div class="form-group" style="max-width:140px;">
-              <label>Amount (₹)</label>
-              <input type="number" id="payAmount" step="0.01" placeholder="0.00">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Supplier</label>
-              <select id="paySupplier">
-                <option value="">— Select Supplier —</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Note</label>
-              <input type="text" id="payNote" placeholder="e.g. Cash, UPI...">
-            </div>
-          </div>
-          <button class="btn btn-success btn-full" onclick="recordPayment()">✅ Record Payment</button>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Payment History</div>
-          <div class="table-scroll">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Supplier</th>
-                  <th>Note</th>
-                  <th class="right">Amount</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="paymentBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ===== PRODUCTS ===== -->
-      <div id="page-products" class="page">
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title" style="margin-bottom:2px;">Products</div>
-              <p style="font-size:11px;color:var(--text-muted);">Edit prices. New orders use updated prices; existing orders keep original.</p>
-            </div>
-            <button class="btn btn-success btn-sm" onclick="openAddProduct()">+ Add</button>
-          </div>
-          <div class="table-scroll">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Product</th>
-                  <th>Cat</th>
-                  <th class="right">Price</th>
-                  <th>Pack</th>
-                  <th class="right">Pack ₹</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="productsBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ===== ANALYTICS ===== -->
-      <div id="page-analytics" class="page">
-        <div class="stats-grid" id="analyticsTopStats" style="margin-bottom:18px;"></div>
-        <div class="card">
-          <div class="card-title">Supplier Breakdown</div>
-          <div id="analyticsSupplierBreakdown"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Monthly Orders (Last 6 Months)</div>
-          <div id="monthlyChart"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Top Products by Value</div>
-          <div id="topProductsChart"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Daily – This Month</div>
-          <div id="dailyChart"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Morning vs Evening</div>
-          <div id="slotBreakdown"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Payment Trend</div>
-          <div id="paymentTrend"></div>
-        </div>
-      </div>
-
-      <!-- ===== EXPORT ===== -->
-      <div id="page-export" class="page">
-        <div class="card">
-          <div class="card-title">Export &amp; Print</div>
-          <div id="storageInfoBar" class="storage-info-bar"></div>
-          <div class="export-grid">
-            <div class="export-card" onclick="exportDailyPDF()">
-              <div class="icon">📋</div><div class="title">Today</div>
-              <div class="desc">Today's report</div>
-            </div>
-            <div class="export-card" onclick="exportWeeklyPDF()">
-              <div class="icon">📆</div><div class="title">Weekly</div>
-              <div class="desc">This week</div>
-            </div>
-            <div class="export-card" onclick="exportMonthlyPDF()">
-              <div class="icon">🗓️</div><div class="title">Monthly</div>
-              <div class="desc">This month</div>
-            </div>
-            <div class="export-card" onclick="exportYearlyPDF()">
-              <div class="icon">📈</div><div class="title">Yearly</div>
-              <div class="desc">Full year</div>
-            </div>
-            <div class="export-card" onclick="saveDataFile()">
-              <div class="icon">📤</div><div class="title">Backup</div>
-              <div class="desc">Download JSON</div>
-            </div>
-            <div class="export-card" onclick="triggerLoadFile()">
-              <div class="icon">📥</div><div class="title">Import</div>
-              <div class="desc">Restore JSON</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Custom export -->
-        <div class="card">
-          <div class="card-title">Custom Export</div>
-          <div class="form-row">
-            <div class="form-group" style="max-width:160px;">
-              <label>Specific Date</label>
-              <input type="date" id="exportDayDate">
-            </div>
-            <div class="form-group" style="flex:0;min-width:auto;align-self:flex-end;">
-              <button class="btn btn-primary" onclick="exportSpecificDayPDF()">🖨️ Print Day</button>
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group" style="max-width:160px;">
-              <label>Month</label>
-              <input type="month" id="exportMonth">
-            </div>
-            <div class="form-group" style="flex:0;min-width:auto;align-self:flex-end;">
-              <button class="btn btn-info" onclick="exportSpecificMonthPDF()">🖨️ Print Month</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Google Drive Sync -->
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title" style="margin-bottom:2px;">☁️ Google Drive Sync</div>
-              <p style="font-size:11px;color:var(--text-muted);">Auto-saves to My Drive → RajMart → amul_daily.json</p>
-            </div>
-            <span id="driveLastSync" style="font-size:10px;color:var(--text-muted);"></span>
-          </div>
-
-          <div id="driveStatusText" class="drive-status-bar">Not connected.</div>
-
-          <div style="margin-bottom:14px;">
-            <div class="section-title">Step 1 — Paste your Google Client ID</div>
-            <div class="form-row" style="margin-top:8px;">
-              <div class="form-group">
-                <label>Google Client ID</label>
-                <input type="text" id="driveClientIdInput" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com" style="font-size:11px;font-family:'IBM Plex Mono',monospace;">
-              </div>
-              <div class="form-group" style="flex:0;min-width:auto;align-self:flex-end;">
-                <button class="btn btn-primary btn-sm" onclick="saveDriveClientId()">💾 Save</button>
-              </div>
-            </div>
-            <details style="margin-top:10px;">
-              <summary style="font-size:11px;font-weight:700;color:var(--blue);cursor:pointer;">📋 How to get a Google Client ID</summary>
-              <ol style="font-size:11px;color:var(--text-muted);margin-top:8px;padding-left:18px;line-height:2.2;">
-                <li>Open <strong>console.cloud.google.com</strong></li>
-                <li>New project → name it <strong>RajMart</strong> → Create</li>
-                <li>APIs &amp; Services → Enable → search &amp; enable <strong>Google Drive API</strong></li>
-                <li>OAuth consent screen → External → App name: RajMart → Save</li>
-                <li>Credentials → + Create → <strong>OAuth Client ID</strong></li>
-                <li>Application type: <strong>Web application</strong></li>
-                <li>Authorised JavaScript origins → Add your site URL</li>
-                <li>Create → copy <strong>Client ID</strong> → paste above → Save</li>
-              </ol>
-            </details>
-          </div>
-
-          <div class="section-title">Step 2 — Connect &amp; Sync</div>
-          <div class="drive-btn-row">
-            <button id="driveSignInBtn"   class="btn btn-primary btn-sm"   onclick="driveSignIn()">🔑 Connect</button>
-            <button id="driveUploadBtn"   class="btn btn-info btn-sm"      onclick="driveUpload(false)" disabled>☁️ Upload</button>
-            <button id="driveDownloadBtn" class="btn btn-success btn-sm"   onclick="driveDownload()"   disabled>📥 Restore</button>
-            <button id="driveSignOutBtn"  class="btn btn-secondary btn-sm" onclick="driveSignOut()" style="display:none;">🔌 Disconnect</button>
-          </div>
-          <p style="font-size:11px;color:var(--text-muted);margin-top:10px;">Auto-syncs 8 seconds after every change.</p>
-        </div>
-      </div>
-
-    </div><!-- main-content -->
-  </div><!-- app-body -->
-</div><!-- mainApp -->
-
-<!-- ===== MODALS ===== -->
-
-<!-- Edit Product Modal -->
-<div class="modal-overlay" id="editPriceModal">
-  <div class="modal">
-    <div class="modal-title" id="editPriceTitle">Edit Product</div>
-    <input type="hidden" id="editPriceId">
-    <input type="hidden" id="editPriceMode" value="edit">
-    <div class="form-row">
-      <div class="form-group" style="flex:2;">
-        <label>Product Name</label>
-        <input type="text" id="editProdName" placeholder="e.g. Gold 500ml">
-      </div>
-      <div class="form-group">
-        <label>Category</label>
-        <select id="editCategory">
-          <option value="regular">Regular</option>
-          <option value="special">Special</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Morning Price (₹/pc)</label>
-        <input type="number" id="editPriceVal" step="0.001" placeholder="0.00">
-      </div>
-      <div class="form-group">
-        <label>Evening Price (₹/pc)</label>
-        <input type="number" id="editEveningPriceVal" step="0.001" placeholder="Same as morning">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Pack Qty (pcs)</label>
-        <input type="number" id="editCrateQty" step="1" placeholder="e.g. 24">
-      </div>
-      <div class="form-group">
-        <label>Pack Type</label>
-        <select id="editPackType">
-          <option value="">None</option>
-          <option value="Crate">Crate</option>
-          <option value="Box">Box</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Default Unit</label>
-        <select id="editDefaultUnit">
-          <option value="pack">Pack/Crate</option>
-          <option value="pc">Pieces</option>
-        </select>
-      </div>
-    </div>
-    <div id="editPricePreview" class="edit-preview"></div>
-    <div class="modal-actions">
-      <button class="btn btn-danger btn-sm" id="editDeleteBtn" style="margin-right:auto;display:none;">🗑️ Delete</button>
-      <button class="btn btn-secondary" onclick="closeModal('editPriceModal')">Cancel</button>
-      <button class="btn btn-primary" id="editSaveBtn" onclick="saveProductPrice()">Save</button>
-    </div>
-  </div>
-</div>
-
-<!-- Delete Confirm Modal -->
-<div class="modal-overlay" id="deleteConfirmModal">
-  <div class="modal">
-    <div class="modal-title">⚠️ Confirm Delete</div>
-    <p id="deleteConfirmMsg" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;"></p>
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModal('deleteConfirmModal')">Cancel</button>
-      <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
-    </div>
-  </div>
-</div>
-
-<!-- Order Detail Modal -->
-<div class="modal-overlay" id="orderDetailModal">
-  <div class="modal modal-wide">
-    <div class="modal-title" id="orderDetailTitle">Order Details</div>
-    <div id="orderDetailContent"></div>
-    <div id="whatsappCopyArea" style="display:none;margin-top:14px;">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-muted);margin-bottom:6px;">WhatsApp Message</div>
-      <textarea id="whatsappMsgBox" readonly class="whatsapp-textarea"></textarea>
-      <button class="btn btn-success btn-full" style="margin-top:7px;" onclick="copyWhatsappMsg()">📋 Copy Message</button>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-info btn-sm"      id="orderDetailPrintBtn">🖨️</button>
-      <button class="btn btn-secondary btn-sm" id="orderDetailEditBtn">✏️ Edit</button>
-      <button class="btn btn-secondary btn-sm" id="orderDetailWhatsappBtn">📲 WhatsApp</button>
-      <button class="btn btn-secondary"        onclick="closeModal('orderDetailModal')">Close</button>
-    </div>
-  </div>
-</div>
-
-<!-- Payment Modal -->
-<div class="modal-overlay" id="paymentModal">
-  <div class="modal">
-    <div class="modal-title" id="payModalTitle">Record Payment</div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Date</label>
-        <input type="date" id="payModalDate">
-      </div>
-      <div class="form-group">
-        <label>Amount (₹)</label>
-        <input type="number" id="payModalAmount" step="0.01" placeholder="0.00">
-      </div>
-    </div>
-    <div class="form-group" style="margin-bottom:10px;">
-      <label>Supplier</label>
-      <select id="payModalSupplier" style="width:100%;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:'IBM Plex Sans',sans-serif;outline:none;">
-        <option value="">— Select Supplier —</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label>Note</label>
-      <input type="text" id="payModalNote" placeholder="e.g. Cash, UPI...">
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModal('paymentModal')">Cancel</button>
-      <button class="btn btn-success" id="payModalSaveBtn" onclick="recordPaymentFromModal()">✅ Record</button>
-    </div>
-  </div>
-</div>
-
-<!-- Edit Order Modal -->
-<div class="modal-overlay" id="editOrderModal">
-  <div class="modal modal-wide">
-    <div class="modal-title">✏️ Edit Order</div>
-    <div class="form-row" style="margin-bottom:14px;">
-      <div class="form-group" style="max-width:160px;">
-        <label>Date</label>
-        <input type="date" id="editOrderDate">
-      </div>
-      <div class="form-group">
-        <label>Slot</label>
-        <div class="delivery-toggle">
-          <button id="editbtn-morning" onclick="setEditOrderType('morning')">🌅</button>
-          <button id="editbtn-evening" onclick="setEditOrderType('evening')">🌆</button>
-          <button id="editbtn-special" onclick="setEditOrderType('special')">⭐</button>
-        </div>
-      </div>
-    </div>
-    <div class="form-group" style="margin-bottom:14px;">
-      <label>Supplier</label>
-      <div id="editOrderSupplierWrap" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
-    </div>
-    <div class="section-title" id="editProductSectionTitle">Products – Morning</div>
-    <div class="product-grid" id="editProductList"></div>
-    <div class="form-group" style="margin-top:12px;">
-      <label>Note (optional)</label>
-      <input type="text" id="editOrderNote" placeholder="Add a note...">
-    </div>
-    <div id="editOrderSummary" style="margin-top:10px;"></div>
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeModal('editOrderModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEditedOrder()">✅ Update</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== TOAST ===== -->
-<div id="toastContainer"></div>
-
-<script src="app.js"></script>
-
-<script>
-// ===== MOBILE MENU TOGGLE =====
-function toggleMobileMenu() {
-  const menu    = document.getElementById('mobileMenu');
-  const overlay = document.getElementById('mobileMenuOverlay');
-  const btn     = document.getElementById('hamburgerBtn');
-  const isOpen  = menu.classList.contains('open');
-  menu.classList.toggle('open');
-  overlay.classList.toggle('open');
-  btn.classList.toggle('open');
-}
-
-// ===== TAB MAP =====
-const tabMap = {
-  dashboard: 'tab-dashboard',
-  order:     'tab-order',
-  ledger:    'tab-ledger',
-  payments:  'tab-payments',
-  products:  'tab-more',
-  analytics: 'tab-more',
-  export:    'tab-more'
-};
-
-function highlightTab(page) {
-  // Bottom tabs
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  const tabId = tabMap[page];
-  if (tabId) { const el = document.getElementById(tabId); if (el) el.classList.add('active'); }
-  // Desktop nav
-  document.querySelectorAll('.desktop-nav button[id^="nav-"]').forEach(b => b.classList.remove('active'));
-  const navBtn = document.getElementById('nav-' + page);
-  if (navBtn) navBtn.classList.add('active');
-  // Mobile menu buttons
-  document.querySelectorAll('.mobile-nav-btn[id^="mnav-"]').forEach(b => b.classList.remove('active'));
-  const mnavBtn = document.getElementById('mnav-' + page);
-  if (mnavBtn) mnavBtn.classList.add('active');
-}
-
-// ===== WRAP showPage TO ALSO HIGHLIGHT TABS =====
-const _baseShowPage = showPage;
-window.showPage = function(page) {
-  _baseShowPage(page);
-  highlightTab(page);
-};
-
-// Initial highlight
-highlightTab('dashboard');
-
-// ===== SHOW INSTALL BUTTON IF PROMPT ALREADY CAPTURED =====
-// (handles the race condition where beforeinstallprompt fired before DOM)
-if (window._deferredInstallPrompt) {
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.style.display = 'inline-flex';
-}
-
-// ===== PWA INSTALL =====
-function pwaInstall() {
-  const prompt = window._deferredInstallPrompt;
-  if (!prompt) return;
-  prompt.prompt();
-  prompt.userChoice.then(function(choice) {
-    if (choice.outcome === 'accepted') {
-      const btn = document.getElementById('pwaInstallBtn');
-      if (btn) btn.style.display = 'none';
-    }
-    window._deferredInstallPrompt = null;
-  });
-}
-
-// ===== SERVICE WORKER =====
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function() {
-    navigator.serviceWorker.register('./sw.js')
-      .then(function(reg) {
-        reg.addEventListener('updatefound', function() {
-          const newSW = reg.installing;
-          newSW.addEventListener('statechange', function() {
-            if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-              setTimeout(function() {
-                if (typeof toast === 'function') toast('🔄 App updated! Reload for latest.', 'info');
-              }, 1000);
-            }
+    <!-- ===== CAPTURE PWA INSTALL PROMPT AS EARLY AS POSSIBLE ===== -->
+    <script>
+        window._deferredInstallPrompt = null;
+          window.addEventListener('beforeinstallprompt', function(e) {
+            e.preventDefault();
+            window._deferredInstallPrompt = e;
+            // Try to show button if DOM already has it
+            var btn = document.getElementById('pwaInstallBtn');
+            if (btn) btn.style.display = 'inline-flex';
           });
-        });
-      })
-      .catch(function(err) { console.warn('[PWA] SW failed:', err); });
-  });
-}
-</script>
+          window.addEventListener('appinstalled', function() {
+            window._deferredInstallPrompt = null;
+            var btn = document.getElementById('pwaInstallBtn');
+            if (btn) btn.style.display = 'none';
+          });
+    </script>
+
+    <div id="mainApp">
+
+        <!-- ===== TOPBAR ===== -->
+        <div class="topbar">
+            <div class="topbar-left">
+                <button class="hamburger-btn" id="hamburgerBtn" onclick="toggleMobileMenu()" aria-label="Menu">
+                    <span></span><span></span><span></span>
+                </button>
+                <div class="topbar-brand">Raj Mart</div>
+            </div>
+
+            <div class="topbar-right">
+                <span id="saveIndicator" class="save-indicator"></span>
+                <button id="driveTopBtn" onclick="driveSignIn()" title="Sync with Google Drive" class="topbar-icon-btn">☁️</button>
+                <button id="pwaInstallBtn" style="display:none;" class="topbar-icon-btn" onclick="pwaInstall()">📲 Install</button>
+            </div>
+        </div>
+
+        <!-- ===== MOBILE SLIDE-DOWN MENU ===== -->
+        <div class="mobile-menu" id="mobileMenu">
+            <div class="mobile-menu-inner">
+                <button class="mobile-nav-btn" id="mnav-dashboard" onclick="showPage('dashboard')">🏠 Dashboard</button>
+                <button class="mobile-nav-btn" id="mnav-order" onclick="showPage('order')">➕ New Order</button>
+                <button class="mobile-nav-btn" id="mnav-ledger" onclick="showPage('ledger')">📒 Ledger</button>
+                <button class="mobile-nav-btn" id="mnav-payments" onclick="showPage('payments')">💳 Payments</button>
+                <button class="mobile-nav-btn" id="mnav-products" onclick="showPage('products')">📦 Products</button>
+                <button class="mobile-nav-btn" id="mnav-analytics" onclick="showPage('analytics')">📊 Analytics</button>
+                <button class="mobile-nav-btn" id="mnav-export" onclick="showPage('export')">📤 Export</button>
+                <div class="mobile-menu-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="triggerLoadFile()">📥 Import JSON</button>
+                    <button class="btn btn-secondary btn-sm" onclick="saveDataFile()">📤 Backup JSON</button>
+                </div>
+            </div>
+        </div>
+        <!-- Overlay to close mobile menu -->
+        <div class="mobile-menu-overlay" id="mobileMenuOverlay" onclick="toggleMobileMenu()"></div>
+
+        <!-- ===== DESKTOP NAV (hidden on mobile) ===== -->
+        <div class="desktop-nav">
+            <button id="nav-dashboard" onclick="showPage('dashboard')">Dashboard</button>
+            <button id="nav-order" onclick="showPage('order')">New Order</button>
+            <button id="nav-ledger" onclick="showPage('ledger')">Ledger</button>
+            <button id="nav-payments" onclick="showPage('payments')">Payments</button>
+            <button id="nav-products" onclick="showPage('products')">Products</button>
+            <button id="nav-analytics" onclick="showPage('analytics')">Analytics</button>
+            <button id="nav-export" onclick="showPage('export')">Export</button>
+            <div class="desktop-nav-actions">
+                <button onclick="triggerLoadFile()" class="topbar-icon-btn" title="Import JSON">📥</button>
+                <button onclick="saveDataFile()" class="topbar-icon-btn" title="Backup JSON">📤</button>
+            </div>
+        </div>
+
+        <!-- ===== BOTTOM TAB BAR (mobile only) ===== -->
+        <nav class="bottom-tabs" id="bottomTabs">
+            <button class="tab-btn" id="tab-dashboard" onclick="showPage('dashboard')">
+                <span class="tab-icon">🏠</span><span class="tab-label">Home</span>
+            </button>
+            <button class="tab-btn" id="tab-order" onclick="showPage('order')">
+                <span class="tab-icon">➕</span><span class="tab-label">Order</span>
+            </button>
+            <button class="tab-btn" id="tab-ledger" onclick="showPage('ledger')">
+                <span class="tab-icon">📒</span><span class="tab-label">Ledger</span>
+            </button>
+            <button class="tab-btn" id="tab-payments" onclick="showPage('payments')">
+                <span class="tab-icon">💳</span><span class="tab-label">Pay</span>
+            </button>
+            <button class="tab-btn" id="tab-more" onclick="toggleMobileMenu()">
+                <span class="tab-icon">⋯</span><span class="tab-label">More</span>
+            </button>
+        </nav>
+
+        <div class="app-body" id="appBody">
+            <div class="main-content">
+
+                <!-- ===== DASHBOARD ===== -->
+                <div id="page-dashboard" class="page">
+                    <div class="page-header">
+                        <div>
+                            <div class="page-title">RAJ MART</div>
+                            <div class="page-subtitle" id="dashDate"></div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="showPage('order')">+ Order</button>
+                    </div>
+                    <div class="stats-grid" id="dashStats"></div>
+                    <div class="card">
+                        <div class="card-title">Supplier Balances</div>
+                        <div id="dashSupplierBalances"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Recent Orders</div>
+                        <div id="dashRecentOrders"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Payment Status</div>
+                        <div id="dashBalance"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">This Month</div>
+                        <div id="dashMonthlySummary"></div>
+                    </div>
+                </div>
+
+                <!-- ===== NEW ORDER ===== -->
+                <div id="page-order" class="page">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title" style="margin-bottom:0;">New Order</div>
+                            <div class="page-subtitle" id="todayDate"></div>
+                        </div>
+
+                        <div class="form-row" style="margin-bottom:14px;">
+                            <div class="form-group" style="max-width:160px;">
+                                <label>Date</label>
+                                <input type="date" id="orderDate" onchange="renderTodaysOrders()">
+                            </div>
+                            <div class="form-group">
+                                <label>Slot</label>
+                                <div class="delivery-toggle">
+                                    <button id="btn-morning" onclick="setOrderType('morning')">🌅</button>
+                                    <button id="btn-evening" onclick="setOrderType('evening')">🌆</button>
+                                    <button id="btn-special" onclick="setOrderType('special')">⭐</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom:14px;">
+                            <label>Supplier</label>
+                            <div id="orderSupplierWrap" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+                        </div>
+                        <div id="specialSlotWrap" style="display:none;margin-bottom:12px;">
+                            <label style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px;">Special Order Slot</label>
+                            <div class="delivery-toggle">
+                                <button id="specialSlotMorning" onclick="setSpecialSlot('morning')" class="active morning">🌅 Morning Special</button>
+                                <button id="specialSlotEvening" onclick="setSpecialSlot('evening')">🌆 Evening Special</button>
+                            </div>
+                        </div>
+                        <select id="specialSlotSelect" style="display:none;">
+                            <option value="morning">morning</option>
+                            <option value="evening">evening</option>
+                        </select>
+                        <div class="section-title" id="productSectionTitle">Products – Morning</div>
+                        <div class="product-grid" id="productList"></div>
+
+                        <div class="form-group" style="margin-top:12px;">
+                            <label>Note (optional)</label>
+                            <input type="text" id="orderNote" placeholder="Add a note...">
+                        </div>
+                        <div id="orderPreview" style="margin-top:12px;"></div>
+                        <div id="orderSummary" style="display:none;" class="order-summary"></div>
+                        <div class="form-actions">
+                            <button class="btn btn-primary btn-lg" onclick="submitOrder()">✅ Save Order</button>
+                            <button class="btn btn-secondary" onclick="clearOrderForm()">✕ Clear</button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Orders for Selected Date</div>
+                        <div id="todaysOrders"></div>
+                    </div>
+                </div>
+
+                <!-- ===== LEDGER ===== -->
+                <div id="page-ledger" class="page">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title" style="margin-bottom:0;">Ledger</div>
+                            <div style="display:flex;gap:6px;">
+                                <button class="btn btn-success btn-sm" onclick="openPaymentFromLedger()">+ Pay</button>
+                                <button class="btn btn-info btn-sm" onclick="printCurrentLedger()">🖨️</button>
+                            </div>
+                        </div>
+
+                        <!-- Supplier tabs -->
+                        <div id="ledgerSupplierTabs" class="supplier-tabs-row"></div>
+
+                        <!-- Date filter -->
+                        <div class="ledger-filter">
+                            <button class="filter-btn active" onclick="setLedgerFilter('all',this)">All</button>
+                            <button class="filter-btn" onclick="setLedgerFilter('this-month',this)">This Month</button>
+                            <button class="filter-btn" onclick="setLedgerFilter('last-month',this)">Last Month</button>
+                            <button class="filter-btn" onclick="setLedgerFilter('custom',this)">Custom</button>
+                        </div>
+                        <div id="customDateRange" style="display:none;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                            <input type="date" id="ledgerFrom" class="date-input-sm" onchange="renderLedger()">
+                            <span style="font-size:12px;color:var(--text-muted);">to</span>
+                            <input type="date" id="ledgerTo" class="date-input-sm" onchange="renderLedger()">
+                        </div>
+
+                        <!-- Summary chips -->
+                        <div id="ledgerSummaryBar" class="ledger-summary-bar"></div>
+
+                        <!-- Table -->
+                        <div class="table-scroll">
+                            <table class="ledger-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Supplier</th>
+                                        <th class="right">Debit</th>
+                                        <th class="right">Credit</th>
+                                        <th class="right">Balance</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ledgerBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== PAYMENTS ===== -->
+                <div id="page-payments" class="page">
+                    <div class="card">
+                        <div class="card-title">Record Payment</div>
+                        <div class="form-row">
+                            <div class="form-group" style="max-width:150px;">
+                                <label>Date</label>
+                                <input type="date" id="payDate">
+                            </div>
+                            <div class="form-group" style="max-width:140px;">
+                                <label>Amount (₹)</label>
+                                <input type="number" id="payAmount" step="0.01" placeholder="0.00">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Supplier</label>
+                                <select id="paySupplier">
+                                    <option value="">— Select Supplier —</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Payment Slot</label>
+                                <select id="paySlot">
+                                    <option value="morning">🌅 Morning</option>
+                                    <option value="evening">🌆 Evening</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Note</label>
+                                <input type="text" id="payNote" placeholder="e.g. Cash, UPI...">
+                            </div>
+                        </div>
+                        <button class="btn btn-success btn-full" onclick="recordPayment()">✅ Record Payment</button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Payment History</div>
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Supplier</th>
+                                        <th>Note</th>
+                                        <th class="right">Amount</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="paymentBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== PRODUCTS ===== -->
+                <div id="page-products" class="page">
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title" style="margin-bottom:2px;">Products</div>
+                                <p style="font-size:11px;color:var(--text-muted);">Edit prices. New orders use updated prices; existing orders keep original.</p>
+                            </div>
+                            <button class="btn btn-success btn-sm" onclick="openAddProduct()">+ Add</button>
+                        </div>
+                        <div class="table-scroll">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Product</th>
+                                        <th>Cat</th>
+                                        <th class="right">Price</th>
+                                        <th>Pack</th>
+                                        <th class="right">Pack ₹</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="productsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ===== ANALYTICS ===== -->
+                <div id="page-analytics" class="page">
+                    <div class="stats-grid" id="analyticsTopStats" style="margin-bottom:18px;"></div>
+                    <div class="card">
+                        <div class="card-title">Supplier Breakdown</div>
+                        <div id="analyticsSupplierBreakdown"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Monthly Orders (Last 6 Months)</div>
+                        <div id="monthlyChart"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Top Products by Value</div>
+                        <div id="topProductsChart"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Daily – This Month</div>
+                        <div id="dailyChart"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Morning vs Evening</div>
+                        <div id="slotBreakdown"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Payment Trend</div>
+                        <div id="paymentTrend"></div>
+                    </div>
+                </div>
+
+                <!-- ===== EXPORT ===== -->
+                <div id="page-export" class="page">
+                    <div class="card">
+                        <div class="card-title">Export &amp; Print</div>
+                        <div id="storageInfoBar" class="storage-info-bar"></div>
+                        <div class="export-grid">
+                            <div class="export-card" onclick="exportDailyPDF()">
+                                <div class="icon">📋</div>
+                                <div class="title">Today</div>
+                                <div class="desc">Today's report</div>
+                            </div>
+                            <div class="export-card" onclick="exportWeeklyPDF()">
+                                <div class="icon">📆</div>
+                                <div class="title">Weekly</div>
+                                <div class="desc">This week</div>
+                            </div>
+                            <div class="export-card" onclick="exportMonthlyPDF()">
+                                <div class="icon">🗓️</div>
+                                <div class="title">Monthly</div>
+                                <div class="desc">This month</div>
+                            </div>
+                            <div class="export-card" onclick="exportYearlyPDF()">
+                                <div class="icon">📈</div>
+                                <div class="title">Yearly</div>
+                                <div class="desc">Full year</div>
+                            </div>
+                            <div class="export-card" onclick="saveDataFile()">
+                                <div class="icon">📤</div>
+                                <div class="title">Backup</div>
+                                <div class="desc">Download JSON</div>
+                            </div>
+                            <div class="export-card" onclick="triggerLoadFile()">
+                                <div class="icon">📥</div>
+                                <div class="title">Import</div>
+                                <div class="desc">Restore JSON</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Custom export -->
+                    <div class="card">
+                        <div class="card-title">Custom Export</div>
+                        <div class="form-row">
+                            <div class="form-group" style="max-width:160px;">
+                                <label>Specific Date</label>
+                                <input type="date" id="exportDayDate">
+                            </div>
+                            <div class="form-group" style="flex:0;min-width:auto;align-self:flex-end;">
+                                <button class="btn btn-primary" onclick="exportSpecificDayPDF()">🖨️ Print Day</button>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="max-width:160px;">
+                                <label>Month</label>
+                                <input type="month" id="exportMonth">
+                            </div>
+                            <div class="form-group" style="flex:0;min-width:auto;align-self:flex-end;">
+                                <button class="btn btn-info" onclick="exportSpecificMonthPDF()">🖨️ Print Month</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Google Drive Sync -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title" style="margin-bottom:2px;">☁️ Google Drive Sync</div>
+                                <p style="font-size:11px;color:var(--text-muted);">Auto-saves to My Drive → RajMart → amul_daily.json</p>
+                            </div>
+                            <span id="driveLastSync" style="font-size:10px;color:var(--text-muted);"></span>
+                        </div>
+
+                        <div id="driveStatusText" class="drive-status-bar">Not connected.</div>
+
+                        <div style="margin-bottom:14px;">
+                            <div class="section-title">Step 1 — Paste your Google Client ID</div>
+                            <div class="form-row" style="margin-top:8px;">
+                                <div class="form-group">
+                                    <label>Google Client ID</label>
+                                    <input type="text" id="driveClientIdInput" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com" style="font-size:11px;font-family:'IBM Plex Mono',monospace;">
+                                </div>
+                                <div class="form-group" style="flex:0;min-width:auto;align-self:flex-end;">
+                                    <button class="btn btn-primary btn-sm" onclick="saveDriveClientId()">💾 Save</button>
+                                </div>
+                            </div>
+                            <details style="margin-top:10px;">
+                                <summary style="font-size:11px;font-weight:700;color:var(--blue);cursor:pointer;">📋 How to get a Google Client ID</summary>
+                                <ol style="font-size:11px;color:var(--text-muted);margin-top:8px;padding-left:18px;line-height:2.2;">
+                                    <li>Open <strong>console.cloud.google.com</strong></li>
+                                    <li>New project → name it <strong>RajMart</strong> → Create</li>
+                                    <li>APIs &amp; Services → Enable → search &amp; enable <strong>Google Drive API</strong></li>
+                                    <li>OAuth consent screen → External → App name: RajMart → Save</li>
+                                    <li>Credentials → + Create → <strong>OAuth Client ID</strong></li>
+                                    <li>Application type: <strong>Web application</strong></li>
+                                    <li>Authorised JavaScript origins → Add your site URL</li>
+                                    <li>Create → copy <strong>Client ID</strong> → paste above → Save</li>
+                                </ol>
+                            </details>
+                        </div>
+
+                        <div class="section-title">Step 2 — Connect &amp; Sync</div>
+                        <div class="drive-btn-row">
+                            <button id="driveSignInBtn" class="btn btn-primary btn-sm" onclick="driveSignIn()">🔑 Connect</button>
+                            <button id="driveUploadBtn" class="btn btn-info btn-sm" onclick="driveUpload(false)" disabled>☁️ Upload</button>
+                            <button id="driveDownloadBtn" class="btn btn-success btn-sm" onclick="driveDownload()" disabled>📥 Restore</button>
+                            <button id="driveSignOutBtn" class="btn btn-secondary btn-sm" onclick="driveSignOut()" style="display:none;">🔌 Disconnect</button>
+                        </div>
+                        <p style="font-size:11px;color:var(--text-muted);margin-top:10px;">Auto-syncs 8 seconds after every change.</p>
+                    </div>
+                </div>
+
+            </div>
+            <!-- main-content -->
+        </div>
+        <!-- app-body -->
+    </div>
+    <!-- mainApp -->
+
+    <!-- ===== MODALS ===== -->
+
+    <!-- Edit Product Modal -->
+    <div class="modal-overlay" id="editPriceModal">
+        <div class="modal">
+            <div class="modal-title" id="editPriceTitle">Edit Product</div>
+            <input type="hidden" id="editPriceId">
+            <input type="hidden" id="editPriceMode" value="edit">
+            <div class="form-row">
+                <div class="form-group" style="flex:2;">
+                    <label>Product Name</label>
+                    <input type="text" id="editProdName" placeholder="e.g. Gold 500ml">
+                </div>
+                <div class="form-group">
+                    <label>Category</label>
+                    <select id="editCategory">
+                        <option value="regular">Regular</option>
+                        <option value="special">Special</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Morning Price (₹/pc)</label>
+                    <input type="number" id="editPriceVal" step="0.001" placeholder="0.00">
+                </div>
+                <div class="form-group">
+                    <label>Evening Price (₹/pc)</label>
+                    <input type="number" id="editEveningPriceVal" step="0.001" placeholder="Same as morning">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Pack Qty (pcs)</label>
+                    <input type="number" id="editCrateQty" step="1" placeholder="e.g. 24">
+                </div>
+                <div class="form-group">
+                    <label>Pack Type</label>
+                    <select id="editPackType">
+                        <option value="">None</option>
+                        <option value="Crate">Crate</option>
+                        <option value="Box">Box</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Default Unit</label>
+                    <select id="editDefaultUnit">
+                        <option value="pack">Pack/Crate</option>
+                        <option value="pc">Pieces</option>
+                    </select>
+                </div>
+            </div>
+            <div id="editPricePreview" class="edit-preview"></div>
+            <div class="modal-actions">
+                <button class="btn btn-danger btn-sm" id="editDeleteBtn" style="margin-right:auto;display:none;">🗑️ Delete</button>
+                <button class="btn btn-secondary" onclick="closeModal('editPriceModal')">Cancel</button>
+                <button class="btn btn-primary" id="editSaveBtn" onclick="saveProductPrice()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirm Modal -->
+    <div class="modal-overlay" id="deleteConfirmModal">
+        <div class="modal">
+            <div class="modal-title">⚠️ Confirm Delete</div>
+            <p id="deleteConfirmMsg" style="font-size:13px;color:var(--text-muted);margin-bottom:8px;"></p>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('deleteConfirmModal')">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Detail Modal -->
+    <div class="modal-overlay" id="orderDetailModal">
+        <div class="modal modal-wide">
+            <div class="modal-title" id="orderDetailTitle">Order Details</div>
+            <div id="orderDetailContent"></div>
+            <div id="whatsappCopyArea" style="display:none;margin-top:14px;">
+                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--text-muted);margin-bottom:6px;">WhatsApp Message</div>
+                <textarea id="whatsappMsgBox" readonly class="whatsapp-textarea"></textarea>
+                <button class="btn btn-success btn-full" style="margin-top:7px;" onclick="copyWhatsappMsg()">📋 Copy Message</button>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-info btn-sm" id="orderDetailPrintBtn">🖨️</button>
+                <button class="btn btn-secondary btn-sm" id="orderDetailEditBtn">✏️ Edit</button>
+                <button class="btn btn-secondary btn-sm" id="orderDetailWhatsappBtn">📲 WhatsApp</button>
+                <button class="btn btn-secondary" onclick="closeModal('orderDetailModal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payment Modal -->
+    <div class="modal-overlay" id="paymentModal">
+        <div class="modal">
+            <div class="modal-title" id="payModalTitle">Record Payment</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Date</label>
+                    <input type="date" id="payModalDate">
+                </div>
+                <div class="form-group">
+                    <label>Amount (₹)</label>
+                    <input type="number" id="payModalAmount" step="0.01" placeholder="0.00">
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom:10px;">
+                <label>Supplier</label>
+                <select id="payModalSupplier" style="width:100%;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:'IBM Plex Sans',sans-serif;outline:none;">
+                    <option value="">— Select Supplier —</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:10px;">
+                <label>Payment Slot</label>
+                <div class="delivery-toggle">
+                    <button id="payModalSlotMorning" onclick="setPayModalSlot('morning')" class="active morning">🌅 Morning</button>
+                    <button id="payModalSlotEvening" onclick="setPayModalSlot('evening')">🌆 Evening</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Note</label>
+                <input type="text" id="payModalNote" placeholder="e.g. Cash, UPI...">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('paymentModal')">Cancel</button>
+                <button class="btn btn-success" id="payModalSaveBtn" onclick="recordPaymentFromModal()">✅ Record</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Order Modal -->
+    <input type="hidden" id="payModalSlot" value="morning">
+    <div class="modal-overlay" id="editOrderModal">
+        <div class="modal modal-wide">
+            <div class="modal-title">✏️ Edit Order</div>
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group" style="max-width:160px;">
+                    <label>Date</label>
+                    <input type="date" id="editOrderDate">
+                </div>
+                <div class="form-group">
+                    <label>Slot</label>
+                    <div class="delivery-toggle">
+                        <button id="editbtn-morning" onclick="setEditOrderType('morning')">🌅</button>
+                        <button id="editbtn-evening" onclick="setEditOrderType('evening')">🌆</button>
+                        <button id="editbtn-special" onclick="setEditOrderType('special')">⭐</button>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom:14px;">
+                <label>Supplier</label>
+                <div id="editOrderSupplierWrap" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+            </div>
+            <div class="section-title" id="editProductSectionTitle">Products – Morning</div>
+            <div class="product-grid" id="editProductList"></div>
+            <div class="form-group" style="margin-top:12px;">
+                <label>Note (optional)</label>
+                <input type="text" id="editOrderNote" placeholder="Add a note...">
+            </div>
+            <div id="editOrderSummary" style="margin-top:10px;"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('editOrderModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="saveEditedOrder()">✅ Update</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== TOAST ===== -->
+    <div id="toastContainer"></div>
+
+    <script src="app.js"></script>
+
+    <script>
+        // ===== MOBILE MENU TOGGLE =====
+        function toggleMobileMenu() {
+          const menu    = document.getElementById('mobileMenu');
+          const overlay = document.getElementById('mobileMenuOverlay');
+          const btn     = document.getElementById('hamburgerBtn');
+          const isOpen  = menu.classList.contains('open');
+          menu.classList.toggle('open');
+          overlay.classList.toggle('open');
+          btn.classList.toggle('open');
+        }
+        
+        // ===== TAB MAP =====
+        const tabMap = {
+          dashboard: 'tab-dashboard',
+          order:     'tab-order',
+          ledger:    'tab-ledger',
+          payments:  'tab-payments',
+          products:  'tab-more',
+          analytics: 'tab-more',
+          export:    'tab-more'
+        };
+        
+        function highlightTab(page) {
+          // Bottom tabs
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          const tabId = tabMap[page];
+          if (tabId) { const el = document.getElementById(tabId); if (el) el.classList.add('active'); }
+          // Desktop nav
+          document.querySelectorAll('.desktop-nav button[id^="nav-"]').forEach(b => b.classList.remove('active'));
+          const navBtn = document.getElementById('nav-' + page);
+          if (navBtn) navBtn.classList.add('active');
+          // Mobile menu buttons
+          document.querySelectorAll('.mobile-nav-btn[id^="mnav-"]').forEach(b => b.classList.remove('active'));
+          const mnavBtn = document.getElementById('mnav-' + page);
+          if (mnavBtn) mnavBtn.classList.add('active');
+        }
+        
+        // ===== WRAP showPage TO ALSO HIGHLIGHT TABS =====
+        const _baseShowPage = showPage;
+        window.showPage = function(page) {
+          _baseShowPage(page);
+          highlightTab(page);
+        };
+        
+        // Initial highlight
+        highlightTab('dashboard');
+        
+        // ===== SHOW INSTALL BUTTON IF PROMPT ALREADY CAPTURED =====
+        // (handles the race condition where beforeinstallprompt fired before DOM)
+        if (window._deferredInstallPrompt) {
+          const btn = document.getElementById('pwaInstallBtn');
+          if (btn) btn.style.display = 'inline-flex';
+        }
+        
+        // ===== PWA INSTALL =====
+        function pwaInstall() {
+          const prompt = window._deferredInstallPrompt;
+          if (!prompt) return;
+          prompt.prompt();
+          prompt.userChoice.then(function(choice) {
+            if (choice.outcome === 'accepted') {
+              const btn = document.getElementById('pwaInstallBtn');
+              if (btn) btn.style.display = 'none';
+            }
+            window._deferredInstallPrompt = null;
+          });
+        }
+        
+        // ===== SERVICE WORKER =====
+        if ('serviceWorker' in navigator) {
+          window.addEventListener('load', function() {
+            navigator.serviceWorker.register('./sw.js')
+              .then(function(reg) {
+                reg.addEventListener('updatefound', function() {
+                  const newSW = reg.installing;
+                  newSW.addEventListener('statechange', function() {
+                    if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                      setTimeout(function() {
+                        if (typeof toast === 'function') toast('🔄 App updated! Reload for latest.', 'info');
+                      }, 1000);
+                    }
+                  });
+                });
+              })
+              .catch(function(err) { console.warn('[PWA] SW failed:', err); });
+          });
+        }
+    </script>
 </body>
+
 </html>

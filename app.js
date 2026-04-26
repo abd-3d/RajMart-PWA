@@ -2,6 +2,7 @@
 //  RajMart – Amul Milk Manager  |  app.js
 //  v4 – Time-aware ledger, Payment slots, Special morning/evening
 //  v5 – Persistent Google Drive auth (auto-reconnect on reload)
+//  v6 – Multi-select ledger export with PDF generation
 // ============================================================
 
 // ==========================================================
@@ -61,6 +62,12 @@ let editSpecialSlot = 'morning';
 let editingPaymentId = null;
 
 // ==========================================================
+//  MULTI-SELECT LEDGER STATE
+// ==========================================================
+let ledgerSelectMode = false;
+let ledgerSelectedIds = new Set(); // Set of row IDs (order or payment)
+
+// ==========================================================
 //  LOCAL STORAGE
 // ==========================================================
 const STORAGE_KEY = 'amul_daily';
@@ -107,41 +114,27 @@ function updateServerIndicator() {
 
 // ==========================================================
 //  GOOGLE DRIVE SYNC — PERSISTENT AUTH
-//
-//  Strategy:
-//  1. On first sign-in (user clicks Connect), request token with
-//     prompt:'consent' to ensure we get a long-lived session.
-//     Store token + expiry timestamp in localStorage.
-//  2. On every app load, call tryAutoReconnectDrive():
-//     a. If stored token is still valid (not expired) → reuse it.
-//     b. If expired → attempt silent refresh with prompt:'none'.
-//        This works as long as the user's Google session is active
-//        in their browser (no popup, totally silent).
-//     c. If silent refresh fails → show "reconnect" nudge (not an
-//        error, just an indicator that Drive needs re-auth).
-//  3. Token is refreshed proactively 5 minutes before expiry.
 // ==========================================================
 
 const DRIVE_FILE_NAME   = 'amul_daily.json';
 const DRIVE_FOLDER_NAME = 'RajMart';
 const DRIVE_SCOPE       = 'https://www.googleapis.com/auth/drive.file';
 
-// Keys used to persist Drive session in localStorage
 const LS_DRIVE_TOKEN      = 'rajmart_drive_token';
-const LS_DRIVE_TOKEN_EXP  = 'rajmart_drive_token_exp';   // Unix ms
+const LS_DRIVE_TOKEN_EXP  = 'rajmart_drive_token_exp';
 const LS_DRIVE_FILE_ID    = 'rajmart_drive_file_id';
 const LS_DRIVE_FOLDER_ID  = 'rajmart_drive_folder_id';
 const LS_DRIVE_CLIENT_ID  = 'rajmart_drive_client_id';
 
 let DRIVE_CLIENT_ID = localStorage.getItem(LS_DRIVE_CLIENT_ID) || '';
 let _driveToken      = null;
-let _driveTokenExp   = 0;      // Unix ms when token expires
+let _driveTokenExp   = 0;
 let _driveFolderId   = localStorage.getItem(LS_DRIVE_FOLDER_ID) || null;
 let _driveFileId     = localStorage.getItem(LS_DRIVE_FILE_ID)   || null;
 let _driveSaveTimer  = null;
 let _driveRefreshTimer = null;
 let _gapiReady       = false;
-let _tokenClient     = null;   // reusable token client
+let _tokenClient     = null;
 
 function onGapiLoad() {
   gapi.load('client', async () => {
@@ -149,27 +142,22 @@ function onGapiLoad() {
       await gapi.client.init({});
       await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/drive/v3/rest');
       _gapiReady = true;
-      // Once gapi is ready, attempt silent reconnect
       tryAutoReconnectDrive();
     } catch(e) { console.warn('[Drive] gapi init failed:', e); }
   });
 }
 
-// ----------------------------------------------------------
-//  AUTO-RECONNECT on app load — called after gapi is ready
-// ----------------------------------------------------------
 async function tryAutoReconnectDrive() {
-  if (!DRIVE_CLIENT_ID) return;                    // No client ID configured
+  if (!DRIVE_CLIENT_ID) return;
   if (!window.google || !window.google.accounts) return;
 
   const storedToken  = localStorage.getItem(LS_DRIVE_TOKEN);
   const storedExpStr = localStorage.getItem(LS_DRIVE_TOKEN_EXP);
   const storedExp    = storedExpStr ? parseInt(storedExpStr, 10) : 0;
   const now          = Date.now();
-  const BUFFER_MS    = 5 * 60 * 1000; // 5 minutes buffer
+  const BUFFER_MS    = 5 * 60 * 1000;
 
   if (storedToken && storedExp && (storedExp - now) > BUFFER_MS) {
-    // Token is still fresh — restore session immediately without any popup
     console.log('[Drive] Restoring session from stored token.');
     _driveToken    = storedToken;
     _driveTokenExp = storedExp;
@@ -180,20 +168,14 @@ async function tryAutoReconnectDrive() {
     return;
   }
 
-  // Token missing or expired — try silent refresh (no popup)
   console.log('[Drive] Attempting silent token refresh…');
   updateDriveStatus('Reconnecting to Drive…');
   silentTokenRefresh().catch(() => {
-    // Silent refresh failed — user's Google session may have expired.
-    // Don't show an error; just show a soft "reconnect" nudge.
     updateDriveStatus('Drive disconnected. Tap ☁️ to reconnect.');
     updateDriveUI(false);
   });
 }
 
-// ----------------------------------------------------------
-//  SILENT TOKEN REFRESH — uses prompt:'none' (no popup/redirect)
-// ----------------------------------------------------------
 function silentTokenRefresh() {
   return new Promise((resolve, reject) => {
     if (!DRIVE_CLIENT_ID) { reject(new Error('No client ID')); return; }
@@ -201,14 +183,14 @@ function silentTokenRefresh() {
     const client = google.accounts.oauth2.initTokenClient({
       client_id: DRIVE_CLIENT_ID,
       scope: DRIVE_SCOPE,
-      prompt: 'none',   // ← KEY: no login/consent screen shown
+      prompt: 'none',
       callback: (resp) => {
         if (resp.error) {
           console.warn('[Drive] Silent refresh failed:', resp.error);
           reject(new Error(resp.error));
           return;
         }
-        _onTokenReceived(resp, true /* silent */);
+        _onTokenReceived(resp, true);
         resolve();
       }
     });
@@ -217,9 +199,6 @@ function silentTokenRefresh() {
   });
 }
 
-// ----------------------------------------------------------
-//  EXPLICIT SIGN-IN (user clicks "Connect" button)
-// ----------------------------------------------------------
 function driveSignIn() {
   if (!DRIVE_CLIENT_ID) {
     toast('⚠️ Paste your Google Client ID first — see Export page.', 'error');
@@ -234,30 +213,23 @@ function driveSignIn() {
   const client = google.accounts.oauth2.initTokenClient({
     client_id: DRIVE_CLIENT_ID,
     scope: DRIVE_SCOPE,
-    // Don't force consent screen on every sign-in after the first time
     callback: (resp) => {
       if (resp.error) {
         toast('❌ Drive sign-in failed: ' + resp.error, 'error');
         return;
       }
-      _onTokenReceived(resp, false /* not silent */);
+      _onTokenReceived(resp, false);
     }
   });
 
   client.requestAccessToken();
 }
 
-// ----------------------------------------------------------
-//  SHARED: handle a new token (from explicit or silent flow)
-// ----------------------------------------------------------
 async function _onTokenReceived(resp, silent) {
   _driveToken = resp.access_token;
-
-  // expires_in is in seconds; convert to absolute ms timestamp
   const expiresIn = (resp.expires_in || 3600) * 1000;
   _driveTokenExp  = Date.now() + expiresIn;
 
-  // Persist token so next app load can reuse it
   localStorage.setItem(LS_DRIVE_TOKEN,     _driveToken);
   localStorage.setItem(LS_DRIVE_TOKEN_EXP, String(_driveTokenExp));
 
@@ -268,10 +240,8 @@ async function _onTokenReceived(resp, silent) {
     toast('✅ Connected to Google Drive!', 'success');
   }
 
-  // Schedule proactive refresh 5 min before expiry
   scheduleTokenRefresh();
 
-  // Restore folder/file IDs from storage or find them on Drive
   if (!_driveFolderId) await driveFindOrCreateFolder();
   if (!_driveFileId)   await driveFindFile();
 
@@ -281,27 +251,18 @@ async function _onTokenReceived(resp, silent) {
   );
 }
 
-// ----------------------------------------------------------
-//  PROACTIVE TOKEN REFRESH — runs 5 min before expiry
-// ----------------------------------------------------------
 function scheduleTokenRefresh() {
   clearTimeout(_driveRefreshTimer);
   const msUntilExpiry = _driveTokenExp - Date.now();
   const refreshIn     = Math.max(msUntilExpiry - 5 * 60 * 1000, 0);
 
-  console.log(`[Drive] Token refresh scheduled in ${Math.round(refreshIn/60000)} min.`);
-
   _driveRefreshTimer = setTimeout(() => {
-    console.log('[Drive] Proactively refreshing token…');
     silentTokenRefresh().catch(() => {
-      console.warn('[Drive] Proactive refresh failed. Will retry on next interaction.');
+      console.warn('[Drive] Proactive refresh failed.');
     });
   }, refreshIn);
 }
 
-// ----------------------------------------------------------
-//  SIGN OUT
-// ----------------------------------------------------------
 function driveSignOut() {
   if (_driveToken && window.google) {
     google.accounts.oauth2.revoke(_driveToken, () => {});
@@ -314,7 +275,6 @@ function driveSignOut() {
   clearTimeout(_driveSaveTimer);
   clearTimeout(_driveRefreshTimer);
 
-  // Clear all persisted Drive data
   localStorage.removeItem(LS_DRIVE_TOKEN);
   localStorage.removeItem(LS_DRIVE_TOKEN_EXP);
   localStorage.removeItem(LS_DRIVE_FILE_ID);
@@ -324,9 +284,6 @@ function driveSignOut() {
   toast('Disconnected from Google Drive.', 'info');
 }
 
-// ----------------------------------------------------------
-//  SAVE CLIENT ID
-// ----------------------------------------------------------
 function saveDriveClientId() {
   const val = (document.getElementById('driveClientIdInput').value || '').trim();
   if (!val) { toast('Paste a Client ID first.', 'error'); return; }
@@ -336,9 +293,6 @@ function saveDriveClientId() {
   updateDriveUI(false);
 }
 
-// ----------------------------------------------------------
-//  UI HELPERS
-// ----------------------------------------------------------
 function updateDriveUI(connected) {
   const topBtn = document.getElementById('driveTopBtn');
   if (topBtn) {
@@ -369,16 +323,11 @@ function updateDriveLastSync() {
   updateDriveStatus('Synced ✅');
 }
 
-// ----------------------------------------------------------
-//  ENSURE TOKEN IS VALID before any Drive operation
-//  (handles the case where the tab was left open for hours)
-// ----------------------------------------------------------
 async function ensureValidToken() {
   if (!_driveToken) return false;
-  const BUFFER_MS = 60 * 1000; // 1 min buffer
-  if (Date.now() < _driveTokenExp - BUFFER_MS) return true; // still valid
+  const BUFFER_MS = 60 * 1000;
+  if (Date.now() < _driveTokenExp - BUFFER_MS) return true;
 
-  // Token expired mid-session — try silent refresh
   try {
     await silentTokenRefresh();
     return true;
@@ -389,9 +338,6 @@ async function ensureValidToken() {
   }
 }
 
-// ----------------------------------------------------------
-//  FOLDER MANAGEMENT
-// ----------------------------------------------------------
 async function driveFindOrCreateFolder() {
   if (!_driveToken) return;
   try {
@@ -410,7 +356,6 @@ async function driveFindOrCreateFolder() {
       _driveFolderId = folder.result.id;
       toast('📁 Created "RajMart" folder in Google Drive.', 'info');
     }
-    // Persist folder ID so we don't need to search again
     localStorage.setItem(LS_DRIVE_FOLDER_ID, _driveFolderId);
   } catch(e) {
     console.error('[Drive] Folder error:', e);
@@ -428,7 +373,6 @@ async function driveFindFile() {
     });
     if (res.result.files.length > 0) {
       _driveFileId = res.result.files[0].id;
-      // Persist file ID
       localStorage.setItem(LS_DRIVE_FILE_ID, _driveFileId);
     }
   } catch(e) {
@@ -436,16 +380,12 @@ async function driveFindFile() {
   }
 }
 
-// ----------------------------------------------------------
-//  UPLOAD / DOWNLOAD
-// ----------------------------------------------------------
 async function driveUpload(silent = false) {
   if (!_driveToken) {
     if (!silent) toast('⚠️ Connect to Google Drive first.', 'error');
     return;
   }
 
-  // Ensure token is still valid
   const valid = await ensureValidToken();
   if (!valid) {
     if (!silent) toast('⚠️ Drive session expired. Tap ☁️ to reconnect.', 'error');
@@ -1386,13 +1326,11 @@ function setLedgerSupplier(supplierId) {
   renderLedger();
 }
 
-// REPLACE with:
 function getLedgerDateRange() {
   const today = todayStr();
 
   if (currentLedgerFilter === 'this-week') {
     const d = new Date();
-    // Monday = day 1; shift Sunday (0) to 7 so week starts on Monday
     const dayOfWeek = d.getDay() || 7;
     const mon = new Date(d);
     mon.setDate(d.getDate() - dayOfWeek + 1);
@@ -1455,6 +1393,287 @@ function buildAllLedgerRows(supplierId) {
   return rows;
 }
 
+// ==========================================================
+//  LEDGER MULTI-SELECT
+// ==========================================================
+function toggleLedgerSelectMode() {
+  ledgerSelectMode = !ledgerSelectMode;
+  if (!ledgerSelectMode) {
+    ledgerSelectedIds.clear();
+  }
+  renderLedger();
+  updateSelectionToolbar();
+}
+
+function toggleRowSelection(id, checkbox) {
+  if (checkbox.checked) {
+    ledgerSelectedIds.add(id);
+  } else {
+    ledgerSelectedIds.delete(id);
+  }
+  updateSelectionToolbar();
+  // Update row highlight
+  const row = document.getElementById('ledger-row-' + id);
+  if (row) row.classList.toggle('ledger-row-selected', checkbox.checked);
+}
+
+function selectAllLedgerRows() {
+  const checkboxes = document.querySelectorAll('.ledger-row-cb');
+  const allChecked = checkboxes.length > 0 && [...checkboxes].every(cb => cb.checked);
+  checkboxes.forEach(cb => {
+    cb.checked = !allChecked;
+    const rowId = cb.dataset.id;
+    if (!allChecked) {
+      ledgerSelectedIds.add(rowId);
+    } else {
+      ledgerSelectedIds.delete(rowId);
+    }
+    const row = document.getElementById('ledger-row-' + rowId);
+    if (row) row.classList.toggle('ledger-row-selected', !allChecked);
+  });
+  updateSelectionToolbar();
+}
+
+function updateSelectionToolbar() {
+  const toolbar = document.getElementById('ledgerSelectionToolbar');
+  const selectBtn = document.getElementById('ledgerSelectModeBtn');
+  const count = ledgerSelectedIds.size;
+
+  if (selectBtn) {
+    selectBtn.textContent = ledgerSelectMode ? '✕ Cancel' : '☑️ Select';
+    selectBtn.className = ledgerSelectMode ? 'btn btn-danger btn-sm' : 'btn btn-secondary btn-sm';
+  }
+
+  if (!toolbar) return;
+  if (ledgerSelectMode) {
+    toolbar.style.display = 'flex';
+    const countEl = document.getElementById('selectionCount');
+    if (countEl) countEl.textContent = count === 0 ? 'Select rows to export' : `${count} row${count!==1?'s':''} selected`;
+    const exportBtn = document.getElementById('selectionExportBtn');
+    if (exportBtn) exportBtn.disabled = count === 0;
+  } else {
+    toolbar.style.display = 'none';
+  }
+}
+
+function exportSelectedRows() {
+  if (ledgerSelectedIds.size === 0) { toast('Select at least one row first.', 'error'); return; }
+  // Build the full row list (all dates, current supplier filter)
+  const allRows = buildAllLedgerRows(currentLedgerSupplier);
+  const selectedRows = allRows.filter(r => ledgerSelectedIds.has(r.id));
+  if (selectedRows.length === 0) { toast('No matching rows found.', 'error'); return; }
+  printSelectedLedgerRows(selectedRows);
+}
+
+function printSelectedLedgerRows(rows) {
+  // Sort by date then slot order
+  rows.sort((a, b) => a.date.localeCompare(b.date) || rowSortKey(a) - rowSortKey(b));
+
+  // Calculate running balance from beginning of time up to the first selected row date
+  const allRows = buildAllLedgerRows(currentLedgerSupplier);
+  const firstDate = rows[0].date;
+  const beforeRows = allRows.filter(r => r.date < firstDate);
+  let runningBal = beforeRows.reduce((s, r) => s + r.debit - r.credit, 0);
+
+  // Compute running balances for selected rows
+  let totalDebit = 0, totalCredit = 0;
+  const rowsWithBal = rows.map(r => {
+    runningBal += r.debit - r.credit;
+    totalDebit += r.debit;
+    totalCredit += r.credit;
+    return { ...r, balance: runningBal };
+  });
+
+  const closingBalance = rowsWithBal.length ? rowsWithBal[rowsWithBal.length - 1].balance : 0;
+
+  // Build order detail sections (one per order)
+  const orderRows = rowsWithBal.filter(r => r.type !== 'payment' && r.items && r.items.length > 0);
+  const paymentRows = rowsWithBal.filter(r => r.type === 'payment');
+
+  // Supplier name for title
+  const supName = currentLedgerSupplier !== 'all'
+    ? (getSupplier(currentLedgerSupplier)?.name || '')
+    : 'All Suppliers';
+
+  // Date range for title
+  const dates = rows.map(r => r.date).sort();
+  const dateRangeStr = dates.length > 1 && dates[0] !== dates[dates.length-1]
+    ? `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])}`
+    : fmtDate(dates[0]);
+
+  // Build order detail HTML blocks
+  let orderDetailHtml = '';
+  orderRows.forEach(r => {
+    const sup = getSupplier(r.supplier);
+    const icon = rowIcon(r);
+    const slotLabel = r.type==='morning'?'Morning':r.type==='evening'?'Evening':(r.specialSlot==='evening'?'Evening Special':'Morning Special');
+    const orderTotal = r.debit;
+    orderDetailHtml += `
+      <div class="order-section">
+        <h3 style="color:#c0392b;font-size:13px;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #e0e0e0;">
+          ${icon} ${slotLabel} — ${fmtDateLong(r.date)}${sup ? ' &nbsp;|&nbsp; ' + sup.name : ''}
+        </h3>
+        ${r.note ? `<p style="font-size:11px;color:#888;margin-bottom:6px;">📝 Note: ${r.note}</p>` : ''}
+        <table class="print-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th class="right">Pcs</th>
+              <th class="right">Crates</th>
+              <th class="right">Rate</th>
+              <th class="right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${r.items.map(it => {
+              const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
+              const crates = it.crateQtyAtTime ? (it.piecesQty / it.crateQtyAtTime).toFixed(2).replace(/\.?0+$/,'') : '—';
+              return `<tr>
+                <td>${p.name}</td>
+                <td class="right">${it.piecesQty}</td>
+                <td class="right">${crates}</td>
+                <td class="right">₹${it.priceAtTime.toFixed(3).replace(/\.?0+$/,'')}</td>
+                <td class="right">₹${fmt(it.amount)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4" style="text-align:right;font-weight:700;padding:6px 8px;border-top:2px solid #ddd;">ORDER TOTAL</td>
+              <td class="right" style="font-weight:700;font-size:13px;border-top:2px solid #ddd;">₹${fmt(orderTotal)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>`;
+  });
+
+  // Payment details section
+  let paymentDetailHtml = '';
+  if (paymentRows.length > 0) {
+    paymentDetailHtml = `
+      <div style="margin-top:20px;">
+        <h3 style="color:#1e8449;font-size:13px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e0e0e0;">
+          💳 Payment Details
+        </h3>
+        <table class="print-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Slot</th>
+              <th>Supplier</th>
+              <th>Note</th>
+              <th class="right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paymentRows.map(r => {
+              const sup = getSupplier(r.supplier);
+              const slotIcon = r.timeSlot === 'evening' ? '🌆' : '🌅';
+              return `<tr class="payment-row">
+                <td>${fmtDateLong(r.date)}</td>
+                <td>${slotIcon} ${r.timeSlot === 'evening' ? 'Evening' : 'Morning'}</td>
+                <td>${sup ? sup.name : '—'}</td>
+                <td style="color:#666;">${r.description.split(' – ').pop()}</td>
+                <td class="right" style="color:#1e8449;font-weight:700;">₹${fmt(r.credit)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4" style="text-align:right;font-weight:700;padding:6px 8px;border-top:2px solid #ddd;">TOTAL PAID</td>
+              <td class="right" style="font-weight:700;font-size:13px;color:#1e8449;border-top:2px solid #ddd;">₹${fmt(totalCredit)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>`;
+  }
+
+  // Summary ledger table
+  const summaryTableHtml = `
+    <div style="margin-top:24px;">
+      <h3 style="font-size:13px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e0e0e0;">
+        📊 Ledger Summary
+      </h3>
+      <table class="print-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Slot</th>
+            <th>Supplier</th>
+            <th>Description</th>
+            <th class="right">Debit</th>
+            <th class="right">Credit</th>
+            <th class="right">Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsWithBal.map(r => {
+            const sup = getSupplier(r.supplier);
+            const icon = rowIcon(r);
+            return `<tr class="${r.type==='payment'?'payment-row':''}">
+              <td>${fmtDate(r.date)}</td>
+              <td>${icon}</td>
+              <td>${sup ? sup.name : '—'}</td>
+              <td>${r.description.split(' – ').pop()}${r.note && r.type!=='payment' && r.note ? ' · '+r.note : ''}</td>
+              <td class="right">${r.debit>0?'₹'+fmt(r.debit):'—'}</td>
+              <td class="right" style="color:#1e8449;">${r.credit>0?'₹'+fmt(r.credit):'—'}</td>
+              <td class="right balance-cell">₹${fmt(r.balance)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="font-weight:700;background:#f8f8f8;">
+            <td colspan="4" style="text-align:right;padding:8px;">TOTALS</td>
+            <td class="right" style="color:#c0392b;">₹${fmt(totalDebit)}</td>
+            <td class="right" style="color:#1e8449;">₹${fmt(totalCredit)}</td>
+            <td class="right balance-cell">₹${fmt(closingBalance)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`;
+
+  // Final summary box
+  const netBalance = totalDebit - totalCredit;
+  const summaryBoxHtml = `
+    <div class="print-summary">
+      <div class="print-summary-box">
+        <div class="label">Total Orders</div>
+        <div class="value" style="color:#c0392b;">₹${fmt(totalDebit)}</div>
+      </div>
+      <div class="print-summary-box">
+        <div class="label">Total Paid</div>
+        <div class="value" style="color:#1e8449;">₹${fmt(totalCredit)}</div>
+      </div>
+      <div class="print-summary-box">
+        <div class="label">Outstanding</div>
+        <div class="value" style="color:#d35400;">₹${fmt(netBalance)}</div>
+      </div>
+      <div class="print-summary-box">
+        <div class="label">Closing Balance</div>
+        <div class="value" style="color:#c0392b;">₹${fmt(closingBalance)}</div>
+      </div>
+    </div>`;
+
+  const titleStr = `Selected Ledger Export — ${supName}`;
+
+  const html = `
+    <div class="print-header">
+      <h1>Raj Mart</h1>
+      <p style="font-weight:700;font-size:14px;">${titleStr}</p>
+      <p>Period: ${dateRangeStr}</p>
+      <p style="font-size:11px;color:#888;">Printed: ${new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'})}</p>
+      <p style="font-size:11px;color:#888;">${rows.length} row(s) selected — ${orderRows.length} order(s), ${paymentRows.length} payment(s)</p>
+    </div>
+
+    ${orderDetailHtml}
+    ${paymentDetailHtml}
+    ${summaryTableHtml}
+    ${summaryBoxHtml}
+  `;
+
+  openPrintWindow(html);
+}
+
 function renderLedger() {
   const tabContainer = document.getElementById('ledgerSupplierTabs');
   if (tabContainer) {
@@ -1478,7 +1697,7 @@ function renderLedger() {
   const tbody = document.getElementById('ledgerBody');
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="icon">📒</div><div class="text">No transactions in this period.</div></div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${ledgerSelectMode ? 7 : 6}"><div class="empty-state"><div class="icon">📒</div><div class="text">No transactions in this period.</div></div></td></tr>`;
   } else {
     tbody.innerHTML = rows.map(r => {
       bal += r.debit - r.credit;
@@ -1488,6 +1707,14 @@ function renderLedger() {
       const detailId = 'det-' + r.id;
       const sup = getSupplier(r.supplier);
       const icon = rowIcon(r);
+      const isSelected = ledgerSelectedIds.has(r.id);
+
+      const checkboxCell = ledgerSelectMode ? `
+        <td class="ledger-cb-cell">
+          <input type="checkbox" class="ledger-row-cb" data-id="${r.id}"
+            ${isSelected ? 'checked' : ''}
+            onchange="toggleRowSelection('${r.id}', this)">
+        </td>` : '';
 
       let detailHTML = '';
       if (!isPay && r.items) {
@@ -1510,7 +1737,8 @@ function renderLedger() {
           </div>`;
       }
 
-      return `<tr class="${isPay?'payment-row':''}">
+      return `<tr class="${isPay?'payment-row':''} ${isSelected?'ledger-row-selected':''}" id="ledger-row-${r.id}">
+        ${checkboxCell}
         <td class="date-cell">${fmtDate(r.date)}<br>
           <span style="font-size:13px;">${icon}</span>
         </td>
@@ -1537,6 +1765,9 @@ function renderLedger() {
     <div class="ledger-summary-chip orange-chip">Balance: ₹${fmt(outstanding)}</div>
     ${openingBal > 0 ? `<div class="ledger-summary-chip gray-chip">Opening: ₹${fmt(openingBal)}</div>` : ''}
     ${currentSup ? `<div class="ledger-summary-chip" style="background:${currentSup.bg};color:${currentSup.color};">${currentSup.name}</div>` : ''}`;
+
+  // Update the selection toolbar state after re-render
+  updateSelectionToolbar();
 }
 
 function toggleDetail(id) {
@@ -2044,7 +2275,8 @@ function openPrintWindow(content) {
       .print-summary-box .label{font-size:10px;text-transform:uppercase;font-weight:700;color:#666;letter-spacing:0.5px;}
       .print-summary-box .value{font-size:18px;font-weight:700;color:#c0392b;font-family:'IBM Plex Mono',monospace;margin-top:3px;}
       h3{color:#c0392b;font-size:12px;margin:14px 0 7px;}
-      @media print{button{display:none;}}
+      .order-section{page-break-inside:avoid;}
+      @media print{button{display:none;}.order-section{page-break-inside:avoid;}}
     </style>
   </head><body>
     ${content}
@@ -2073,5 +2305,3 @@ document.getElementById('editPackType').addEventListener('change', updateEditPre
 // ==========================================================
 showPage('dashboard');
 loadFromLocalStorage();
-// Note: Drive auto-reconnect happens inside onGapiLoad() → tryAutoReconnectDrive()
-// which is called once gapi finishes loading (triggered by the script tag in index.html)

@@ -32,18 +32,17 @@
     <!-- ===== CAPTURE PWA INSTALL PROMPT AS EARLY AS POSSIBLE ===== -->
     <script>
         window._deferredInstallPrompt = null;
-          window.addEventListener('beforeinstallprompt', function(e) {
-            e.preventDefault();
-            window._deferredInstallPrompt = e;
-            // Try to show button if DOM already has it
-            var btn = document.getElementById('pwaInstallBtn');
-            if (btn) btn.style.display = 'inline-flex';
-          });
-          window.addEventListener('appinstalled', function() {
-            window._deferredInstallPrompt = null;
-            var btn = document.getElementById('pwaInstallBtn');
-            if (btn) btn.style.display = 'none';
-          });
+        window.addEventListener('beforeinstallprompt', function(e) {
+          e.preventDefault();
+          window._deferredInstallPrompt = e;
+          var btn = document.getElementById('pwaInstallBtn');
+          if (btn) btn.style.display = 'inline-flex';
+        });
+        window.addEventListener('appinstalled', function() {
+          window._deferredInstallPrompt = null;
+          var btn = document.getElementById('pwaInstallBtn');
+          if (btn) btn.style.display = 'none';
+        });
     </script>
 
     <div id="mainApp">
@@ -56,7 +55,6 @@
                 </button>
                 <div class="topbar-brand">Raj Mart</div>
             </div>
-
             <div class="topbar-right">
                 <span id="saveIndicator" class="save-indicator"></span>
                 <button id="driveTopBtn" onclick="driveSignIn()" title="Sync with Google Drive" class="topbar-icon-btn">☁️</button>
@@ -80,10 +78,9 @@
                 </div>
             </div>
         </div>
-        <!-- Overlay to close mobile menu -->
         <div class="mobile-menu-overlay" id="mobileMenuOverlay" onclick="toggleMobileMenu()"></div>
 
-        <!-- ===== DESKTOP NAV (hidden on mobile) ===== -->
+        <!-- ===== DESKTOP NAV ===== -->
         <div class="desktop-nav">
             <button id="nav-dashboard" onclick="showPage('dashboard')">Dashboard</button>
             <button id="nav-order" onclick="showPage('order')">New Order</button>
@@ -98,7 +95,7 @@
             </div>
         </div>
 
-        <!-- ===== BOTTOM TAB BAR (mobile only) ===== -->
+        <!-- ===== BOTTOM TAB BAR ===== -->
         <nav class="bottom-tabs" id="bottomTabs">
             <button class="tab-btn" id="tab-dashboard" onclick="showPage('dashboard')">
                 <span class="tab-icon">🏠</span><span class="tab-label">Home</span>
@@ -155,7 +152,6 @@
                             <div class="card-title" style="margin-bottom:0;">New Order</div>
                             <div class="page-subtitle" id="todayDate"></div>
                         </div>
-
                         <div class="form-row" style="margin-bottom:14px;">
                             <div class="form-group" style="max-width:160px;">
                                 <label>Date</label>
@@ -170,7 +166,6 @@
                                 </div>
                             </div>
                         </div>
-
                         <div class="form-group" style="margin-bottom:14px;">
                             <label>Supplier</label>
                             <div id="orderSupplierWrap" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
@@ -188,7 +183,6 @@
                         </select>
                         <div class="section-title" id="productSectionTitle">Products – Morning</div>
                         <div class="product-grid" id="productList"></div>
-
                         <div class="form-group" style="margin-top:12px;">
                             <label>Note (optional)</label>
                             <input type="text" id="orderNote" placeholder="Add a note...">
@@ -200,7 +194,6 @@
                             <button class="btn btn-secondary" onclick="clearOrderForm()">✕ Clear</button>
                         </div>
                     </div>
-
                     <div class="card">
                         <div class="card-title">Orders for Selected Date</div>
                         <div id="todaysOrders"></div>
@@ -212,17 +205,27 @@
                     <div class="card">
                         <div class="card-header">
                             <div class="card-title" style="margin-bottom:0;">Ledger</div>
-                            <div style="display:flex;gap:6px;">
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                                 <button class="btn btn-success btn-sm" onclick="openPaymentFromLedger()">+ Pay</button>
                                 <button class="btn btn-info btn-sm" onclick="printCurrentLedger()">🖨️</button>
+                                <!-- Multi-select mode toggle -->
+                                <button id="ledgerSelectModeBtn" class="btn btn-secondary btn-sm" onclick="toggleLedgerSelectMode()">☑️ Select</button>
                             </div>
+                        </div>
+
+                        <!-- ── Selection toolbar: shown only when select mode is active ── -->
+                        <div id="ledgerSelectionToolbar" class="ledger-selection-toolbar" style="display:none;">
+                            <button class="btn btn-secondary btn-sm" onclick="selectAllLedgerRows()">☑ All</button>
+                            <span id="selectionCount" class="selection-count-label">Select rows to export</span>
+                            <button id="selectionExportBtn" class="btn btn-primary btn-sm" onclick="exportSelectedRows()" disabled>
+                                🖨️ Export PDF
+                            </button>
                         </div>
 
                         <!-- Supplier tabs -->
                         <div id="ledgerSupplierTabs" class="supplier-tabs-row"></div>
 
                         <!-- Date filter -->
-                        <!-- REPLACE with: -->
                         <div class="ledger-filter">
                             <button class="filter-btn active" onclick="setLedgerFilter('all',this)">All</button>
                             <button class="filter-btn" onclick="setLedgerFilter('this-week',this)">This Week</button>
@@ -240,11 +243,12 @@
                         <!-- Summary chips -->
                         <div id="ledgerSummaryBar" class="ledger-summary-bar"></div>
 
-                        <!-- Table -->
+                        <!-- Ledger table — checkbox column <th> is hidden/shown by JS -->
                         <div class="table-scroll">
                             <table class="ledger-table">
                                 <thead>
                                     <tr>
+                                        <th id="ledgerCbHeaderCell" class="ledger-cb-header" style="display:none;width:36px;padding:8px 4px 8px 8px;"></th>
                                         <th>Date</th>
                                         <th>Supplier</th>
                                         <th class="right">Debit</th>
@@ -294,7 +298,6 @@
                         </div>
                         <button class="btn btn-success btn-full" onclick="recordPayment()">✅ Record Payment</button>
                     </div>
-
                     <div class="card">
                         <div class="card-title">Payment History</div>
                         <div class="table-scroll">
@@ -443,9 +446,7 @@
                             </div>
                             <span id="driveLastSync" style="font-size:10px;color:var(--text-muted);"></span>
                         </div>
-
                         <div id="driveStatusText" class="drive-status-bar">Not connected.</div>
-
                         <div style="margin-bottom:14px;">
                             <div class="section-title">Step 1 — Paste your Google Client ID</div>
                             <div class="form-row" style="margin-top:8px;">
@@ -471,7 +472,6 @@
                                 </ol>
                             </details>
                         </div>
-
                         <div class="section-title">Step 2 — Connect &amp; Sync</div>
                         <div class="drive-btn-row">
                             <button id="driveSignInBtn" class="btn btn-primary btn-sm" onclick="driveSignIn()">🔑 Connect</button>
@@ -483,12 +483,9 @@
                     </div>
                 </div>
 
-            </div>
-            <!-- main-content -->
-        </div>
-        <!-- app-body -->
-    </div>
-    <!-- mainApp -->
+            </div><!-- main-content -->
+        </div><!-- app-body -->
+    </div><!-- mainApp -->
 
     <!-- ===== MODALS ===== -->
 
@@ -668,12 +665,11 @@
           const menu    = document.getElementById('mobileMenu');
           const overlay = document.getElementById('mobileMenuOverlay');
           const btn     = document.getElementById('hamburgerBtn');
-          const isOpen  = menu.classList.contains('open');
           menu.classList.toggle('open');
           overlay.classList.toggle('open');
           btn.classList.toggle('open');
         }
-        
+
         // ===== TAB MAP =====
         const tabMap = {
           dashboard: 'tab-dashboard',
@@ -684,39 +680,35 @@
           analytics: 'tab-more',
           export:    'tab-more'
         };
-        
+
         function highlightTab(page) {
-          // Bottom tabs
           document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
           const tabId = tabMap[page];
           if (tabId) { const el = document.getElementById(tabId); if (el) el.classList.add('active'); }
-          // Desktop nav
           document.querySelectorAll('.desktop-nav button[id^="nav-"]').forEach(b => b.classList.remove('active'));
           const navBtn = document.getElementById('nav-' + page);
           if (navBtn) navBtn.classList.add('active');
-          // Mobile menu buttons
           document.querySelectorAll('.mobile-nav-btn[id^="mnav-"]').forEach(b => b.classList.remove('active'));
           const mnavBtn = document.getElementById('mnav-' + page);
           if (mnavBtn) mnavBtn.classList.add('active');
         }
-        
+
         // ===== WRAP showPage TO ALSO HIGHLIGHT TABS =====
         const _baseShowPage = showPage;
         window.showPage = function(page) {
           _baseShowPage(page);
           highlightTab(page);
         };
-        
+
         // Initial highlight
         highlightTab('dashboard');
-        
+
         // ===== SHOW INSTALL BUTTON IF PROMPT ALREADY CAPTURED =====
-        // (handles the race condition where beforeinstallprompt fired before DOM)
         if (window._deferredInstallPrompt) {
           const btn = document.getElementById('pwaInstallBtn');
           if (btn) btn.style.display = 'inline-flex';
         }
-        
+
         // ===== PWA INSTALL =====
         function pwaInstall() {
           const prompt = window._deferredInstallPrompt;
@@ -730,7 +722,7 @@
             window._deferredInstallPrompt = null;
           });
         }
-        
+
         // ===== SERVICE WORKER =====
         if ('serviceWorker' in navigator) {
           window.addEventListener('load', function() {
@@ -750,6 +742,15 @@
               .catch(function(err) { console.warn('[PWA] SW failed:', err); });
           });
         }
+
+        // ===== SYNC CHECKBOX HEADER COLUMN WITH SELECT MODE =====
+        // Patches toggleLedgerSelectMode to show/hide the <th> checkbox column in the table header
+        const _baseToggleLedgerSelectMode = window.toggleLedgerSelectMode;
+        window.toggleLedgerSelectMode = function() {
+          _baseToggleLedgerSelectMode();
+          const cbHeader = document.getElementById('ledgerCbHeaderCell');
+          if (cbHeader) cbHeader.style.display = ledgerSelectMode ? 'table-cell' : 'none';
+        };
     </script>
 </body>
 

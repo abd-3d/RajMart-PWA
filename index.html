@@ -654,6 +654,30 @@
         </div>
     </div>
 
+    <!-- Export Balance Mode Modal -->
+<div class="modal-overlay" id="exportBalanceModeModal">
+  <div class="modal">
+    <div class="modal-title">🖨️ Export Selected Rows</div>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">How should the <strong>Balance</strong> column be calculated in the export?</p>
+
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:6px;">
+      <button class="btn btn-primary btn-lg" onclick="confirmExportSelectedRows(true)" style="text-align:left;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 16px;">
+        <span style="font-size:14px;">📒 Continuous Ledger</span>
+        <span style="font-size:11px;font-weight:400;opacity:0.85;">Balance carries over from full ledger history. Running balance is accurate as of each transaction.</span>
+      </button>
+
+      <button class="btn btn-secondary btn-lg" onclick="confirmExportSelectedRows(false)" style="text-align:left;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 16px;">
+        <span style="font-size:14px;">📄 Standalone</span>
+        <span style="font-size:11px;font-weight:400;opacity:0.75;">Balance starts from ₹0. Only selected rows are counted — useful for sharing a specific period in isolation.</span>
+      </button>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('exportBalanceModeModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+    
     <!-- ===== TOAST ===== -->
     <div id="toastContainer"></div>
 

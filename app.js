@@ -1485,16 +1485,36 @@ function exportSelectedRows() {
   const allRows = buildAllLedgerRows(currentLedgerSupplier);
   const selectedRows = allRows.filter(r => ledgerSelectedIds.has(r.id));
   if (selectedRows.length === 0) { toast('No matching rows found.', 'error'); return; }
-  printSelectedLedgerRows(selectedRows);
+  window._pendingExportRows = selectedRows;
+  openModal('exportBalanceModeModal');
 }
 
-function printSelectedLedgerRows(rows) {
+function confirmExportSelectedRows(includeHistory) {
+  closeModal('exportBalanceModeModal');
+  const selectedRows = window._pendingExportRows;
+  if (!selectedRows || selectedRows.length === 0) return;
+  window._pendingExportRows = null;
+  printSelectedLedgerRows(selectedRows, includeHistory);
+}
+
+function printSelectedLedgerRows(rows, includeHistory) {
   rows.sort((a, b) => a.date.localeCompare(b.date) || rowSortKey(a) - rowSortKey(b));
 
   const allRows = buildAllLedgerRows(currentLedgerSupplier);
-  const firstDate = rows[0].date;
-  const beforeRows = allRows.filter(r => r.date < firstDate);
-  let runningBal = beforeRows.reduce((s, r) => s + r.debit - r.credit, 0);
+
+  // Opening balance
+  let runningBal;
+  if (includeHistory) {
+    const firstRow = rows[0];
+    const beforeRows = allRows.filter(r => {
+      if (r.date < firstRow.date) return true;
+      if (r.date === firstRow.date) return rowSortKey(r) < rowSortKey(firstRow);
+      return false;
+    });
+    runningBal = beforeRows.reduce((s, r) => s + r.debit - r.credit, 0);
+  } else {
+    runningBal = 0;
+  }
 
   let totalDebit = 0, totalCredit = 0;
   const rowsWithBal = rows.map(r => {
@@ -1517,6 +1537,18 @@ function printSelectedLedgerRows(rows) {
   const dateRangeStr = dates.length > 1 && dates[0] !== dates[dates.length-1]
     ? `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])}`
     : fmtDate(dates[0]);
+
+  // Opening balance note for the print header
+  const openingNote = includeHistory
+    ? (runningBal !== 0 || rowsWithBal[0]?.balance !== rowsWithBal[0]?.debit - rowsWithBal[0]?.credit
+        ? `Opening Balance (from full ledger history): ₹${fmt(rowsWithBal[0].balance - (rowsWithBal[0].debit - rowsWithBal[0].credit))}`
+        : '')
+    : 'Standalone export — balance starts from ₹0';
+
+  // Calculate actual opening bal for display
+  const displayOpeningBal = includeHistory
+    ? rowsWithBal[0].balance - (rowsWithBal[0].debit - rowsWithBal[0].credit)
+    : 0;
 
   let orderDetailHtml = '';
   orderRows.forEach(r => {
@@ -1621,6 +1653,11 @@ function printSelectedLedgerRows(rows) {
           </tr>
         </thead>
         <tbody>
+          ${includeHistory && displayOpeningBal !== 0 ? `
+          <tr style="background:#fff8e1;">
+            <td colspan="6" style="font-style:italic;color:#888;font-size:11px;padding:5px 8px;">Opening balance (carried from ledger history)</td>
+            <td class="right balance-cell">₹${fmt(displayOpeningBal)}</td>
+          </tr>` : ''}
           ${rowsWithBal.map(r => {
             const sup = getSupplier(r.supplier);
             const icon = rowIcon(r);
@@ -1649,6 +1686,11 @@ function printSelectedLedgerRows(rows) {
   const netBalance = totalDebit - totalCredit;
   const summaryBoxHtml = `
     <div class="print-summary">
+      ${includeHistory && displayOpeningBal !== 0 ? `
+      <div class="print-summary-box">
+        <div class="label">Opening Balance</div>
+        <div class="value" style="color:#b7950b;">₹${fmt(displayOpeningBal)}</div>
+      </div>` : ''}
       <div class="print-summary-box">
         <div class="label">Total Orders</div>
         <div class="value" style="color:#c0392b;">₹${fmt(totalDebit)}</div>
@@ -1667,13 +1709,15 @@ function printSelectedLedgerRows(rows) {
       </div>
     </div>`;
 
-  const titleStr = `Selected Ledger Export — ${supName}`;
+  const modeLabel = includeHistory ? '(Continuous Ledger)' : '(Standalone)';
+  const titleStr = `Selected Ledger Export ${modeLabel} — ${supName}`;
 
   const html = `
     <div class="print-header">
       <h1>Raj Mart</h1>
       <p style="font-weight:700;font-size:14px;">${titleStr}</p>
       <p>Period: ${dateRangeStr}</p>
+      ${includeHistory && displayOpeningBal !== 0 ? `<p style="font-size:11px;color:#b7950b;font-weight:700;">Opening Balance: ₹${fmt(displayOpeningBal)}</p>` : ''}
       <p style="font-size:11px;color:#888;">Printed: ${new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'})}</p>
       <p style="font-size:11px;color:#888;">${rows.length} row(s) selected — ${orderRows.length} order(s), ${paymentRows.length} payment(s)</p>
     </div>

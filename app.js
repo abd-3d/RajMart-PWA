@@ -3,6 +3,7 @@
 //  v4 – Time-aware ledger, Payment slots, Special morning/evening
 //  v5 – Persistent Google Drive auth (auto-reconnect on reload)
 //  v6 – Multi-select ledger export with PDF generation
+//  v7 – WhatsApp message format unified (monospace table style)
 // ============================================================
 
 // ==========================================================
@@ -1011,94 +1012,107 @@ function showOrderDetail(orderId) {
   document.getElementById('orderDetailEditBtn').onclick = () => { closeModal('orderDetailModal'); openEditOrder(orderId); };
   document.getElementById('orderDetailWhatsappBtn').onclick = () => toggleWhatsappMsg(orderId);
   document.getElementById('whatsappCopyArea').style.display = 'none';
+  document.getElementById('orderDetailWhatsappBtn').textContent = '📲 WhatsApp';
   openModal('orderDetailModal');
 }
 
+// ==========================================================
+//  WHATSAPP MESSAGE — SHARED BUILDER
+//  Produces the same clean monospace-table format for both
+//  the modal preview (toggleWhatsappMsg) and the ledger
+//  one-tap copy (sendLedgerWhatsapp).
+// ==========================================================
+function buildWhatsappMsg(orderId) {
+  const o = DB.orders.find(x => x.id === orderId);
+  if (!o) return '';
+  const sup   = getSupplier(o.supplier);
+  const total = calcOrderTotal(o);
+
+  const slotLabel = o.type === 'morning' ? '🌅 Morning'
+    : o.type === 'evening' ? '🌆 Evening'
+    : (o.specialSlot === 'evening' ? '🌆 Evening Special' : '🌅 Morning Special');
+
+  // ── flat item lines with blank line between each product ──
+  const itemLines = [];
+  o.items.forEach((it, idx) => {
+    const p  = DB.products.find(x => x.id === it.productId) || { name: it.productId };
+    const nm = p.name.substring(0, 22).padEnd(22);
+    const pcs = String(it.piecesQty).padStart(4);
+    const rt  = ('₹' + it.priceAtTime.toFixed(2) + '/pc').padStart(12);
+    const amt = ('₹' + fmt(it.amount)).padStart(10);
+    if (idx > 0) itemLines.push('');          // blank line between products
+    itemLines.push(`${nm} ${pcs} ${rt} ${amt}`);
+  });
+
+  const lines = [
+    '*Raj Mart – Order Details*',
+    '',
+    `Date     : ${fmtDateLong(o.date)}`,
+    `Slot     : ${slotLabel}`,
+    sup    ? `Supplier : ${sup.name}`  : '',
+    o.note ? `Note     : ${o.note}`   : '',
+    '',
+    '```',
+    `Product                  Qty    Rate         Amount`,
+    '-'.repeat(60),
+    ...itemLines,
+    '-'.repeat(60),
+    `${'TOTAL'.padEnd(42)} ${('₹' + fmt(total)).padStart(10)}`,
+    '```',
+    '',
+    `*Total: ₹${fmt(total)}*`
+  ].filter(l => l !== null).join('\n');
+
+  return lines;
+}
+
+// ── Modal preview (Order Detail → 📲 WhatsApp button) ──
 function toggleWhatsappMsg(orderId) {
   const area = document.getElementById('whatsappCopyArea');
-  const btn = document.getElementById('orderDetailWhatsappBtn');
-  if (area.style.display !== 'none') { area.style.display = 'none'; btn.textContent = '📲 WhatsApp'; return; }
-  const o = DB.orders.find(x => x.id === orderId);
-  if (!o) return;
-  const sup = getSupplier(o.supplier);
-  const slotLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
-  const total = calcOrderTotal(o);
-  const pad = (str, len) => String(str).padEnd(len, ' ');
-  const rpad = (str, len) => String(str).padStart(len, ' ');
-  const itemLines = o.items.map(it => {
-    const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
-    const name = p.name.length > 20 ? p.name.substring(0, 19) + '.' : p.name;
-    let qtyStr;
-    if (it.inputUnit === 'pack' || it.inputUnit === 'crate') { qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`; }
-    else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) { const packs = it.piecesQty / it.crateQtyAtTime; const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,''); qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`; }
-    else { qtyStr = `${it.piecesQty}pcs`; }
-    const rate = `Rs.${it.priceAtTime.toFixed(2)}/pc`;
-    const amt = `Rs.${fmt(it.amount)}`;
-    return `  ${pad(name, 22)} ${pad(qtyStr, 20)} ${rpad(rate, 12)} ${rpad(amt, 10)}`;
-  }).join('\n');
-  const divider = '-'.repeat(68);
-  const lines = [`Raj Mart`, `Order Details`, divider, `Date     : ${fmtDateLong(o.date)}`, `Slot     : ${slotLabel}`,
-    sup ? `Supplier : ${sup.name}` : '', o.note ? `Note     : ${o.note}` : '',
-    divider, `  ${'Product'.padEnd(22)} ${'Quantity'.padEnd(20)} ${'Rate'.padStart(12)} ${'Amount'.padStart(10)}`,
-    divider, itemLines, divider, `${'TOTAL'.padEnd(57)} ${rpad('Rs.'+fmt(total), 10)}`, divider, ``,
-    `Please confirm receipt of this order.`, `Thank you.`].filter(l => l !== null && l !== undefined);
-  document.getElementById('whatsappMsgBox').value = lines.filter((l, i) => l !== '' || i === lines.length - 3).join('\n');
+  const btn  = document.getElementById('orderDetailWhatsappBtn');
+  if (area.style.display !== 'none') {
+    area.style.display = 'none';
+    btn.textContent = '📲 WhatsApp';
+    return;
+  }
+  const msg = buildWhatsappMsg(orderId);
+  if (!msg) return;
+  document.getElementById('whatsappMsgBox').value = msg;
   area.style.display = 'block';
   btn.textContent = 'Hide Message';
+}
+
+// ── Ledger one-tap copy (📲 button on each ledger row) ──
+function sendLedgerWhatsapp(orderId) {
+  const msg = buildWhatsappMsg(orderId);
+  if (!msg) return;
+  navigator.clipboard.writeText(msg)
+    .then(() => toast('📋 Copied! Paste in WhatsApp.', 'success'))
+    .catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = msg;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, 99999);
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      toast('📋 Copied! Paste in WhatsApp.', 'success');
+    });
 }
 
 function copyWhatsappMsg() {
   const box = document.getElementById('whatsappMsgBox');
   if (!box) return;
-  box.select(); box.setSelectionRange(0, 99999);
-  try {
-    navigator.clipboard.writeText(box.value).then(() => { toast('Message copied! Paste it in WhatsApp.', 'success'); }).catch(() => { document.execCommand('copy'); toast('Message copied!', 'success'); });
-  } catch(e) { document.execCommand('copy'); toast('Message copied!', 'success'); }
-}
-
-function sendLedgerWhatsapp(orderId) {
-  const o = DB.orders.find(x => x.id === orderId);
-  if (!o) return;
-  const sup = getSupplier(o.supplier);
-  const slotIcon = o.type==='morning'?'🌅':o.type==='evening'?'🌆':(o.specialSlot==='evening'?'🌆⭐':'🌅⭐');
-  const slotLabel = o.type==='morning'?'Morning':o.type==='evening'?'Evening':(o.specialSlot==='evening'?'Evening Special':'Morning Special');
-  const total = calcOrderTotal(o);
-  const C = { name: 18, qty: 18, rate: 13 };
-  const pad  = (s, n) => String(s).padEnd(n, ' ');
-  const rpad = (s, n) => String(s).padStart(n, ' ');
-  const divider = '-'.repeat(C.name + C.qty + C.rate + 12);
-  const itemLines = o.items.map(it => {
-    const p = DB.products.find(x => x.id === it.productId) || { name: it.productId };
-    const name = p.name.length > C.name ? p.name.substring(0, C.name-1)+'.' : p.name;
-    let qtyStr;
-    if (it.inputUnit === 'pack' || it.inputUnit === 'crate') { qtyStr = `${it.inputQty} ${it.packTypeAtTime||'Pack'} (${it.piecesQty}pcs)`; }
-    else if (it.crateQtyAtTime && it.crateQtyAtTime > 0) { const packs = it.piecesQty / it.crateQtyAtTime; const pd = Number.isInteger(packs) ? packs : packs.toFixed(2).replace(/\.?0+$/,''); qtyStr = `${it.piecesQty}pcs (${pd} ${it.packTypeAtTime||'Crate'})`; }
-    else { qtyStr = `${it.piecesQty}pcs`; }
-    return `${pad(name, C.name)} ${pad(qtyStr, C.qty)} ${pad(`Rs.${it.priceAtTime.toFixed(2)}/pc`, C.rate)} Rs.${fmt(it.amount)}`;
-  }).join('\n');
-  const headerRow  = `${pad('Product', C.name)} ${pad('Qty', C.qty)} ${pad('Rate', C.rate)} Amount`;
-  const totalLabel = pad('TOTAL', C.name+1+C.qty+1+C.rate+1);
-  const table = '```\n' + [headerRow, divider, itemLines, divider, `${totalLabel}Rs.${fmt(total)}`].join('\n') + '\n```';
-  const infoLine = [fmtDateLong(o.date), `${slotIcon} ${slotLabel}`, sup?sup.name:''].filter(Boolean).join('  |  ');
-  const msg = [`*Raj Mart – Order Details*`, ``, infoLine, o.note?`📝 ${o.note}`:null, ``, table, `*Total: Rs.${fmt(total)}*`, ``].filter(l=>l!==null).join('\n');
-  navigator.clipboard.writeText(msg).then(() => { toast('📋 Copied! Paste in WhatsApp.', 'success'); }).catch(() => {
-    const ta = document.createElement('textarea');
-    ta.value = msg; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, 99999);
-    document.execCommand('copy'); document.body.removeChild(ta);
-    toast('📋 Copied! Paste in WhatsApp.', 'success');
-  });
-}
-
-function confirmDeleteOrder(orderId) {
-  pendingDelete = { type: 'order', id: orderId };
-  document.getElementById('deleteConfirmMsg').textContent = 'Delete this order? This cannot be undone.';
-  openModal('deleteConfirmModal');
-}
-function confirmDeletePayment(paymentId) {
-  pendingDelete = { type: 'payment', id: paymentId };
-  document.getElementById('deleteConfirmMsg').textContent = 'Delete this payment record? This cannot be undone.';
-  openModal('deleteConfirmModal');
+  navigator.clipboard.writeText(box.value)
+    .then(() => toast('📋 Message copied! Paste it in WhatsApp.', 'success'))
+    .catch(() => {
+      box.select();
+      box.setSelectionRange(0, 99999);
+      document.execCommand('copy');
+      toast('📋 Message copied!', 'success');
+    });
 }
 
 // ==========================================================
@@ -1307,6 +1321,17 @@ function confirmDelete() {
   closeModal('deleteConfirmModal');
 }
 
+function confirmDeleteOrder(orderId) {
+  pendingDelete = { type: 'order', id: orderId };
+  document.getElementById('deleteConfirmMsg').textContent = 'Delete this order? This cannot be undone.';
+  openModal('deleteConfirmModal');
+}
+function confirmDeletePayment(paymentId) {
+  pendingDelete = { type: 'payment', id: paymentId };
+  document.getElementById('deleteConfirmMsg').textContent = 'Delete this payment record? This cannot be undone.';
+  openModal('deleteConfirmModal');
+}
+
 // ==========================================================
 //  LEDGER
 // ==========================================================
@@ -1412,7 +1437,6 @@ function toggleRowSelection(id, checkbox) {
     ledgerSelectedIds.delete(id);
   }
   updateSelectionToolbar();
-  // Update row highlight
   const row = document.getElementById('ledger-row-' + id);
   if (row) row.classList.toggle('ledger-row-selected', checkbox.checked);
 }
@@ -1458,7 +1482,6 @@ function updateSelectionToolbar() {
 
 function exportSelectedRows() {
   if (ledgerSelectedIds.size === 0) { toast('Select at least one row first.', 'error'); return; }
-  // Build the full row list (all dates, current supplier filter)
   const allRows = buildAllLedgerRows(currentLedgerSupplier);
   const selectedRows = allRows.filter(r => ledgerSelectedIds.has(r.id));
   if (selectedRows.length === 0) { toast('No matching rows found.', 'error'); return; }
@@ -1466,16 +1489,13 @@ function exportSelectedRows() {
 }
 
 function printSelectedLedgerRows(rows) {
-  // Sort by date then slot order
   rows.sort((a, b) => a.date.localeCompare(b.date) || rowSortKey(a) - rowSortKey(b));
 
-  // Calculate running balance from beginning of time up to the first selected row date
   const allRows = buildAllLedgerRows(currentLedgerSupplier);
   const firstDate = rows[0].date;
   const beforeRows = allRows.filter(r => r.date < firstDate);
   let runningBal = beforeRows.reduce((s, r) => s + r.debit - r.credit, 0);
 
-  // Compute running balances for selected rows
   let totalDebit = 0, totalCredit = 0;
   const rowsWithBal = rows.map(r => {
     runningBal += r.debit - r.credit;
@@ -1486,22 +1506,18 @@ function printSelectedLedgerRows(rows) {
 
   const closingBalance = rowsWithBal.length ? rowsWithBal[rowsWithBal.length - 1].balance : 0;
 
-  // Build order detail sections (one per order)
   const orderRows = rowsWithBal.filter(r => r.type !== 'payment' && r.items && r.items.length > 0);
   const paymentRows = rowsWithBal.filter(r => r.type === 'payment');
 
-  // Supplier name for title
   const supName = currentLedgerSupplier !== 'all'
     ? (getSupplier(currentLedgerSupplier)?.name || '')
     : 'All Suppliers';
 
-  // Date range for title
   const dates = rows.map(r => r.date).sort();
   const dateRangeStr = dates.length > 1 && dates[0] !== dates[dates.length-1]
     ? `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length-1])}`
     : fmtDate(dates[0]);
 
-  // Build order detail HTML blocks
   let orderDetailHtml = '';
   orderRows.forEach(r => {
     const sup = getSupplier(r.supplier);
@@ -1547,7 +1563,6 @@ function printSelectedLedgerRows(rows) {
       </div>`;
   });
 
-  // Payment details section
   let paymentDetailHtml = '';
   if (paymentRows.length > 0) {
     paymentDetailHtml = `
@@ -1588,7 +1603,6 @@ function printSelectedLedgerRows(rows) {
       </div>`;
   }
 
-  // Summary ledger table
   const summaryTableHtml = `
     <div style="margin-top:24px;">
       <h3 style="font-size:13px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #e0e0e0;">
@@ -1632,7 +1646,6 @@ function printSelectedLedgerRows(rows) {
       </table>
     </div>`;
 
-  // Final summary box
   const netBalance = totalDebit - totalCredit;
   const summaryBoxHtml = `
     <div class="print-summary">
@@ -1766,7 +1779,6 @@ function renderLedger() {
     ${openingBal > 0 ? `<div class="ledger-summary-chip gray-chip">Opening: ₹${fmt(openingBal)}</div>` : ''}
     ${currentSup ? `<div class="ledger-summary-chip" style="background:${currentSup.bg};color:${currentSup.color};">${currentSup.name}</div>` : ''}`;
 
-  // Update the selection toolbar state after re-render
   updateSelectionToolbar();
 }
 

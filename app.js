@@ -591,11 +591,11 @@ function supplierBadge(supplierId) {
 // ==========================================================
 function rowSortKey(r) {
   if (r.type === 'morning') return 0;
-  if (r.type === 'payment' && (r.timeSlot === 'morning' || !r.timeSlot)) return 1;
-  if (r.type === 'evening') return 2;
-  if (r.type === 'payment' && r.timeSlot === 'evening') return 3;
-  if (r.type === 'special' && (r.specialSlot === 'morning' || !r.specialSlot)) return 4;
-  if (r.type === 'special' && r.specialSlot === 'evening') return 5;
+  if (r.type === 'special' && (r.specialSlot === 'morning' || !r.specialSlot)) return 1;
+  if (r.type === 'payment' && (r.timeSlot === 'morning' || !r.timeSlot)) return 2;
+  if (r.type === 'evening') return 3;
+  if (r.type === 'special' && r.specialSlot === 'evening') return 4;
+  if (r.type === 'payment' && r.timeSlot === 'evening') return 5;
   return 6;
 }
 

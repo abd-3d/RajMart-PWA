@@ -3,7 +3,7 @@
 //  Cache-first strategy – runs fully offline after first load
 // ============================================================
 
-const CACHE_NAME = 'amul_daily_v8';
+const CACHE_NAME = 'amul_daily_v9';
 
 // All files that must be cached for offline use
 const CACHE_ASSETS = [
